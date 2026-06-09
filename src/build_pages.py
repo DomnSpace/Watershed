@@ -87,8 +87,10 @@ def override_region_for_basin(lon, lat, current):
         return "Baltic / East Sea Europe"
 
     # Britain and Ireland split.
-    # Keep Mersey / Liverpool-Manchester as Irish Sea, but stop Irish Sea from stealing east-draining England.
-    if -3.25 <= lon <= -2.0 and 53.0 <= lat <= 53.9:
+    # West-facing Severn/Wye/Dee/Mersey/Cumbria outlets go to the Irish Sea before North Sea rules.
+    if -4.7 <= lon <= -2.0 and 51.0 <= lat <= 53.05:
+        return "Irish Sea Europe"
+    if -3.55 <= lon <= -2.0 and 53.0 <= lat <= 55.25:
         return "Irish Sea Europe"
     if -2.6 <= lon <= 1.8 and 50.6 <= lat <= 56.2:
         return "North Sea Europe"
