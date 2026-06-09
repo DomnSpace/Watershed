@@ -1,0 +1,9 @@
+geopandas
+shapely
+pyogrio
+fiona
+rasterio
+matplotlib
+pandas
+numpy
+requests
