@@ -25,6 +25,7 @@ COLORS = {
     "Polar Europe": "#9cc9df",
     "Caspian Europe": "#c28b8b",
     "Dardanelles Europe": "#e07a5f",
+    "Tehran / Central Iran Sink": "#d2a15e",
     "Unclassified / Other": "#999999",
 }
 
@@ -53,6 +54,10 @@ def find_first(root, pattern):
 
 def override_region_for_basin(lon, lat, current):
     """Local corrections using each HydroBASINS subbasin's own representative point."""
+    # Tehran / central Iranian endorheic sink visible on the map: separate from Caspian drainage.
+    if 49.0 <= lon <= 55.6 and 33.7 <= lat < 36.45:
+        return "Tehran / Central Iran Sink"
+
     # Gulf of Bothnia / Bothnian Bay and most Finnish-Swedish Baltic drainage.
     # Must run before Norway/Polar rules so the Bottnischer Meerbusen coast stays East Sea.
     if 14.5 <= lon <= 32.5 and 58.0 <= lat < 66.85:
@@ -263,7 +268,7 @@ html, body, #map { height: 100%; margin: 0; background: #08111a; }
 const colors = {
  "Mediterranean Europe":"#d98f32", "Black Sea Europe":"#76a95f", "Baltic / East Sea Europe":"#43aebe",
  "North Sea Europe":"#d6b84f", "Atlantic Europe":"#9273b5", "Irish Sea Europe":"#7e68a8", "Polar Europe":"#9cc9df",
- "Caspian Europe":"#c28b8b", "Dardanelles Europe":"#e07a5f", "Unclassified / Other":"#999999"
+ "Caspian Europe":"#c28b8b", "Dardanelles Europe":"#e07a5f", "Tehran / Central Iran Sink":"#d2a15e", "Unclassified / Other":"#999999"
 };
 const map = L.map('map', { zoomControl: true }).setView([54, 15], 4);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 10 }).addTo(map);
