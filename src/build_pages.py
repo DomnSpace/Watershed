@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import io
-import json
 import zipfile
 
 import geopandas as gpd
@@ -21,8 +20,10 @@ COLORS = {
     "Baltic / East Sea Europe": "#6fb7c7",
     "North Sea Europe": "#d6b84f",
     "Atlantic Europe": "#9273b5",
+    "Irish Sea Europe": "#7e68a8",
     "Polar Europe": "#9cc9df",
     "Caspian Europe": "#c28b8b",
+    "Dardanelles Europe": "#e07a5f",
     "Unclassified / Other": "#999999",
 }
 
@@ -39,6 +40,42 @@ def download_zip(url, outdir, label):
 def find_first(root, pattern):
     hits = sorted(root.rglob(pattern))
     return hits[0] if hits else None
+
+
+def override_region_for_basin(lon, lat, current):
+    """Local corrections using each subbasin's own representative point.
+
+    Terminal-point classification is good at large scale, but individual coastal
+    basins can be stolen by neighbouring marginal-sea boxes. These overrides are
+    intentionally geographic and narrow enough to fix visible errors without
+    changing the hydrological topology.
+    """
+    # Maas / Meuse basin and lower Scheldt/Rhine-Meuse delta: North Sea.
+    if 3.0 <= lon <= 7.8 and 48.0 <= lat <= 52.4:
+        return "North Sea Europe"
+
+    # Maritsa / Meric / Evros: Aegean / Mediterranean, not Dardanelles or Black Sea.
+    if 23.0 <= lon <= 27.4 and 40.2 <= lat <= 42.8:
+        return "Mediterranean Europe"
+
+    # Garonne-Dordogne / Bordeaux and Charente: Atlantic.
+    if -2.2 <= lon <= 1.8 and 43.0 <= lat <= 46.2:
+        return "Atlantic Europe"
+    if -1.8 <= lon <= 0.7 and 44.0 <= lat <= 46.9:
+        return "Atlantic Europe"
+
+    # Loire: Atlantic, including inland representative points.
+    if -4.4 <= lon <= 3.2 and 46.4 <= lat <= 48.9:
+        return "Atlantic Europe"
+
+    # Liverpool-Manchester / Mersey-Dee-Irish Sea-facing Britain.
+    if -4.2 <= lon <= -1.6 and 52.7 <= lat <= 54.8:
+        return "Irish Sea Europe"
+    # Cumbria, Solway and Clyde-facing belt.
+    if -5.8 <= lon <= -2.8 and 54.4 <= lat <= 56.6:
+        return "Irish Sea Europe"
+
+    return current
 
 
 def build_regions(level=6, channel_as="Atlantic Europe"):
@@ -59,21 +96,32 @@ def build_regions(level=6, channel_as="Atlantic Europe"):
     ids = set(gdf["HYBAS_ID"].astype(int))
     next_down = dict(zip(gdf["HYBAS_ID"].astype(int), gdf["NEXT_DOWN"].fillna(0).astype(int)))
     terminals = {int(i): base.trace_terminal(int(i), next_down, ids) for i in ids}
-    reps = gdf.set_index(gdf["HYBAS_ID"].astype(int)).geometry.representative_point()
+    reps_by_id = gdf.set_index(gdf["HYBAS_ID"].astype(int)).geometry.representative_point()
 
     term_region = {}
     terminal_rows = []
     for tid in set(terminals.values()):
-        p = reps.loc[tid]
+        p = reps_by_id.loc[tid]
         region = classify_terminal_v2(p.x, p.y, channel_as)
         term_region[tid] = region
         terminal_rows.append({"terminal_id": tid, "lon": p.x, "lat": p.y, "outlet_region": region})
 
     gdf["terminal_id"] = gdf["HYBAS_ID"].astype(int).map(terminals)
     gdf["outlet_region"] = gdf["terminal_id"].map(term_region)
+
+    # Apply local basin overrides from each basin's own representative point.
+    own_reps = gdf.geometry.representative_point()
+    gdf["rep_lon"] = own_reps.x
+    gdf["rep_lat"] = own_reps.y
+    gdf["outlet_region"] = [
+        override_region_for_basin(lon, lat, reg)
+        for lon, lat, reg in zip(gdf["rep_lon"], gdf["rep_lat"], gdf["outlet_region"])
+    ]
+
     regions = gdf.dissolve(by="outlet_region", as_index=False)[["outlet_region", "geometry"]]
     regions["color"] = regions["outlet_region"].map(COLORS).fillna("#999999")
-    return regions, pd.DataFrame(terminal_rows)
+    basin_debug = gdf[["HYBAS_ID", "NEXT_DOWN", "terminal_id", "outlet_region", "rep_lon", "rep_lat"]].copy()
+    return regions, pd.DataFrame(terminal_rows), basin_debug
 
 
 def build_rivers(regions):
@@ -86,21 +134,19 @@ def build_rivers(regions):
     bbox = gpd.GeoDataFrame(geometry=[box(*EUROPE_BBOX)], crs="EPSG:4326")
     rivers = gpd.overlay(rivers, bbox, how="intersection", keep_geom_type=True)
     rivers = rivers[~rivers.geometry.is_empty].copy()
+    rivers["name"] = rivers.get("name", "").fillna("")
+    rivers = rivers[["name", "scalerank", "geometry"]]
 
-    join = gpd.sjoin(
-        rivers[["name", "scalerank", "geometry"]],
-        regions[["outlet_region", "geometry"]],
-        how="inner",
-        predicate="intersects",
-    )
-    join = join.drop(columns=[c for c in ["index_right"] if c in join.columns])
-    join["name"] = join["name"].fillna("")
-    return join
+    # Clip river geometries to outlet regions. This avoids the old bug where a
+    # full river line was duplicated into every region it merely intersected.
+    clipped = gpd.overlay(rivers, regions[["outlet_region", "geometry"]], how="intersection", keep_geom_type=True)
+    clipped = clipped[~clipped.geometry.is_empty].copy()
+    clipped["name"] = clipped["name"].fillna("")
+    return clipped[["name", "scalerank", "outlet_region", "geometry"]]
 
 
 def write_geojson(gdf, path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Keep files compact enough for Pages.
     out = gdf.copy()
     out["geometry"] = out.geometry.simplify(0.015, preserve_topology=True)
     path.write_text(out.to_json(drop_id=True), encoding="utf-8")
@@ -130,7 +176,7 @@ html, body, #map { height: 100%; margin: 0; background: #08111a; }
 <div id="map"></div>
 <div class="panel">
   <h1>Europe by Watershed and Common Outlet</h1>
-  <p>Hover a macro-basin: the region and its rivers light up together. This is the fast correction loop: if a basin is misclassified, the rivers make the error visible.</p>
+  <p>Hover a macro-basin: the region and rivers clipped inside it light up together. Misclassified basins should now be visible without duplicate whole-river artifacts.</p>
   <p><b>Basis:</b> HydroBASINS drainage topology + Natural Earth rivers. Classification is still an editable policy layer for marginal seas.</p>
   <div class="legend" id="legend"></div>
 </div>
@@ -138,8 +184,8 @@ html, body, #map { height: 100%; margin: 0; background: #08111a; }
 <script>
 const colors = {
  "Mediterranean Europe":"#d98f32", "Black Sea Europe":"#76a95f", "Baltic / East Sea Europe":"#6fb7c7",
- "North Sea Europe":"#d6b84f", "Atlantic Europe":"#9273b5", "Polar Europe":"#9cc9df",
- "Caspian Europe":"#c28b8b", "Unclassified / Other":"#999999"
+ "North Sea Europe":"#d6b84f", "Atlantic Europe":"#9273b5", "Irish Sea Europe":"#7e68a8", "Polar Europe":"#9cc9df",
+ "Caspian Europe":"#c28b8b", "Dardanelles Europe":"#e07a5f", "Unclassified / Other":"#999999"
 };
 const map = L.map('map', { zoomControl: true }).setView([54, 15], 4);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 10 }).addTo(map);
@@ -150,7 +196,7 @@ let regionLayer, riverLayer;
 let active = null;
 function regionStyle(f){ const c=f.properties.color || colors[f.properties.outlet_region] || '#aaa'; return {color:c, weight:1.5, fillColor:c, fillOpacity:.32}; }
 function riverStyle(f){ const on = f.properties.outlet_region === active; return {color:on ? '#00a6ff' : '#2b78a0', weight:on ? 3.5 : .8, opacity:on ? .95 : .22}; }
-function setActive(name){ active=name; if(riverLayer) riverLayer.setStyle(riverStyle); if(regionLayer) regionLayer.setStyle(f => { const s=regionStyle(f); if(f.properties.outlet_region===active){s.weight=4; s.fillOpacity=.55;} return s; }); document.getElementById('status').innerHTML = name ? `<b>${name}</b><br>Rivers in this outlet region highlighted.` : 'Hover a watershed region.'; }
+function setActive(name){ active=name; if(riverLayer) riverLayer.setStyle(riverStyle); if(regionLayer) regionLayer.setStyle(f => { const s=regionStyle(f); if(f.properties.outlet_region===active){s.weight=4; s.fillOpacity=.55;} return s; }); document.getElementById('status').innerHTML = name ? `<b>${name}</b><br>Rivers clipped inside this outlet region highlighted.` : 'Hover a watershed region.'; }
 Promise.all([fetch('data/regions.geojson').then(r=>r.json()), fetch('data/rivers.geojson').then(r=>r.json())]).then(([regions,rivers])=>{
   riverLayer = L.geoJSON(rivers, {style: riverStyle, interactive:false}).addTo(map);
   regionLayer = L.geoJSON(regions, {style: regionStyle, onEachFeature:(f,l)=>{
@@ -170,11 +216,12 @@ Promise.all([fetch('data/regions.geojson').then(r=>r.json()), fetch('data/rivers
 def main():
     site = Path("site")
     data = site / "data"
-    regions, terminals = build_regions(level=6, channel_as="Atlantic Europe")
+    regions, terminals, basin_debug = build_regions(level=6, channel_as="Atlantic Europe")
     rivers = build_rivers(regions)
     write_geojson(regions, data / "regions.geojson")
     write_geojson(rivers, data / "rivers.geojson")
     terminals.to_csv(data / "terminal_debug_points.csv", index=False)
+    basin_debug.to_csv(data / "basin_debug_points.csv", index=False)
     write_index(site)
     print("Built GitHub Pages site in ./site")
 
