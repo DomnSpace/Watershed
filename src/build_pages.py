@@ -53,8 +53,13 @@ def find_first(root, pattern):
 
 def override_region_for_basin(lon, lat, current):
     """Local corrections using each HydroBASINS subbasin's own representative point."""
+    # Gulf of Bothnia / Bothnian Bay and most Finnish-Swedish Baltic drainage.
+    # Must run before Norway/Polar rules so the Bottnischer Meerbusen coast stays East Sea.
+    if 14.5 <= lon <= 32.5 and 58.0 <= lat < 66.85:
+        return "Baltic / East Sea Europe"
+
     # Norway: prevent Baltic leakage. Far north polar; SW Norway North Sea; mid/west Norway Atlantic.
-    if 4.0 <= lon <= 32.0 and lat >= 66.2:
+    if 4.0 <= lon <= 32.0 and lat >= 66.85:
         return "Polar Europe"
     if 3.0 <= lon <= 12.5 and 58.0 <= lat < 62.2:
         return "North Sea Europe"
