@@ -58,18 +58,18 @@ def override_region_for_basin(lon, lat, current):
     if 49.0 <= lon <= 55.6 and 33.7 <= lat < 36.45:
         return "Tehran / Central Iran Sink"
 
-    # Norway coastal corrections must run before the Bothnian/Baltic rule.
-    # This prevents two west-coast Norwegian basins from being swallowed by the Baltic override.
+    # Norway coastal corrections: narrow coastal strips only, not a broad rectangle over Sweden.
     if 4.0 <= lon <= 32.0 and lat >= 66.85:
         return "Polar Europe"
-    if 3.0 <= lon <= 12.5 and 58.0 <= lat < 62.2:
+    if 3.0 <= lon <= 10.8 and 58.0 <= lat < 62.2:
         return "North Sea Europe"
-    if 3.0 <= lon <= 18.9 and 62.2 <= lat < 66.85:
+    if 3.0 <= lon <= 10.9 and 62.2 <= lat < 66.85:
+        return "Atlantic Europe"
+    if 10.9 < lon <= 13.6 and 64.3 <= lat < 66.85:
         return "Atlantic Europe"
 
     # Gulf of Bothnia / Bothnian Bay and Finnish-Swedish Baltic drainage.
-    # Keep this east of the Scandinavian divide at higher latitudes.
-    if 18.2 <= lon <= 32.5 and 62.0 <= lat < 66.85:
+    if 13.6 <= lon <= 32.5 and 62.0 <= lat < 66.85:
         return "Baltic / East Sea Europe"
     if 14.5 <= lon <= 32.5 and 58.0 <= lat < 62.0:
         return "Baltic / East Sea Europe"
