@@ -11,16 +11,14 @@ from shapely.geometry import box
 import make_europe_watershed_map as base
 from make_europe_watershed_map_v2 import classify_terminal_v2
 
-HYDRORIVERS_URLS = [
-    "https://data.hydrosheds.org/file/HydroRIVERS/HydroRIVERS_v10_eu_shp.zip",
-]
+HYDRORIVERS_URLS = ["https://data.hydrosheds.org/file/HydroRIVERS/HydroRIVERS_v10_eu_shp.zip"]
 NATURAL_EARTH_RIVERS_URL = "https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_rivers_lake_centerlines.zip"
 EUROPE_BBOX = base.EUROPE_BBOX
 
 COLORS = {
     "Mediterranean Europe": "#d98f32",
     "Black Sea Europe": "#76a95f",
-    "Baltic / East Sea Europe": "#6fb7c7",
+    "Baltic / East Sea Europe": "#43aebe",
     "North Sea Europe": "#d6b84f",
     "Atlantic Europe": "#9273b5",
     "Irish Sea Europe": "#7e68a8",
@@ -54,8 +52,8 @@ def find_first(root, pattern):
 
 
 def override_region_for_basin(lon, lat, current):
-    """Local corrections using each subbasin's own representative point."""
-    # Norway: keep far north polar; keep western/northern Norwegian coast out of Baltic.
+    """Local corrections using each HydroBASINS subbasin's own representative point."""
+    # Norway: prevent Baltic leakage. Far north polar; SW Norway North Sea; mid/west Norway Atlantic.
     if 4.0 <= lon <= 32.0 and lat >= 66.2:
         return "Polar Europe"
     if 3.0 <= lon <= 12.5 and 58.0 <= lat < 62.2:
@@ -63,28 +61,25 @@ def override_region_for_basin(lon, lat, current):
     if 3.0 <= lon <= 18.5 and 62.2 <= lat < 66.2:
         return "Atlantic Europe"
 
-    # Denmark split: west/central Jutland to North Sea; east Denmark/Zealand/Bornholm to Baltic.
+    # Denmark: west/central Jutland to North Sea; islands/east coast to Baltic.
     if 7.7 <= lon <= 10.55 and 54.4 <= lat <= 57.9:
         return "North Sea Europe"
     if 10.55 < lon <= 15.4 and 54.4 <= lat <= 57.9:
         return "Baltic / East Sea Europe"
 
-    # Mecklenburg / Pomeranian coast and low coastal basins: Baltic, not North Sea/gray.
-    if 10.5 <= lon <= 14.6 and 53.1 <= lat <= 54.9:
+    # Mecklenburg / Pomeranian low coastal basins: Baltic.
+    if 10.2 <= lon <= 14.8 and 53.0 <= lat <= 55.1:
         return "Baltic / East Sea Europe"
 
-    # Britain: force local west/east split before broad Atlantic/North Sea leakage.
-    # Eastern England and east Scotland drain to North Sea.
+    # Britain and Ireland split.
     if -2.6 <= lon <= 1.8 and 50.6 <= lat <= 56.2:
         return "North Sea Europe"
     if -4.0 <= lon <= 1.8 and 56.0 <= lat <= 59.4:
         return "North Sea Europe"
-    # Irish Sea micro-outlet: east Ireland, Wales west/north, Mersey/Dee/Solway/Clyde-facing zone.
     if -7.7 <= lon <= -2.0 and 50.0 <= lat <= 56.5:
         return "Irish Sea Europe"
     if -8.1 <= lon <= -3.4 and 55.7 <= lat <= 59.0:
         return "Irish Sea Europe"
-    # Outer west Britain/Ireland remains Atlantic.
     if -11.2 <= lon < -7.7 and 50.0 <= lat <= 56.8:
         return "Atlantic Europe"
     if -10.8 <= lon < -8.0 and 56.0 <= lat <= 61.0:
@@ -92,15 +87,15 @@ def override_region_for_basin(lon, lat, current):
     if -8.8 <= lon < -4.0 and 58.0 <= lat <= 61.0:
         return "Atlantic Europe"
 
-    # Maas / Meuse basin and lower Scheldt/Rhine-Meuse delta: North Sea.
+    # Maas / Meuse basin and Rhine-Meuse-Scheldt delta: North Sea.
     if 2.2 <= lon <= 8.9 and 47.35 <= lat <= 53.0:
         return "North Sea Europe"
 
-    # Maritsa / Meric / Evros: Aegean / Mediterranean, not Dardanelles or Black Sea.
+    # Maritsa / Meric / Evros: Aegean / Mediterranean.
     if 23.0 <= lon <= 27.6 and 40.1 <= lat <= 42.9:
         return "Mediterranean Europe"
 
-    # Montpellier / Languedoc coastal rivers and Rhône-Saône corridor: Mediterranean.
+    # Montpellier / Languedoc coastal rivers and Rhone-Saone corridor: Mediterranean.
     if 2.2 <= lon <= 5.2 and 42.7 <= lat <= 44.5:
         return "Mediterranean Europe"
     if 3.6 <= lon <= 6.9 and 43.0 <= lat <= 47.9:
@@ -119,7 +114,7 @@ def override_region_for_basin(lon, lat, current):
     return current
 
 
-def build_regions(level=6, channel_as="Atlantic Europe"):
+def build_regions(level=7, channel_as="Atlantic Europe"):
     data = Path("data")
     hybas_dir = data / f"hydrobasins_lev{level}"
     shp = find_first(hybas_dir, f"hybas_eu_lev{level:02d}_v1c.shp")
@@ -157,11 +152,13 @@ def build_regions(level=6, channel_as="Atlantic Europe"):
         override_region_for_basin(lon, lat, reg)
         for lon, lat, reg in zip(gdf["rep_lon"], gdf["rep_lat"], gdf["outlet_region"])
     ]
+    gdf["color"] = gdf["outlet_region"].map(COLORS).fillna("#999999")
 
+    basins = gdf[["HYBAS_ID", "NEXT_DOWN", "terminal_id", "outlet_region", "color", "geometry"]].copy()
     regions = gdf.dissolve(by="outlet_region", as_index=False)[["outlet_region", "geometry"]]
     regions["color"] = regions["outlet_region"].map(COLORS).fillna("#999999")
     basin_debug = gdf[["HYBAS_ID", "NEXT_DOWN", "terminal_id", "outlet_region", "rep_lon", "rep_lat"]].copy()
-    return regions, pd.DataFrame(terminal_rows), basin_debug
+    return regions, basins, pd.DataFrame(terminal_rows), basin_debug
 
 
 def load_hydrorivers():
@@ -221,10 +218,10 @@ def build_rivers(regions):
     return clipped[["name", "scalerank", "river_source", "outlet_region", "geometry"]]
 
 
-def write_geojson(gdf, path):
+def write_geojson(gdf, path, simplify=0.01):
     path.parent.mkdir(parents=True, exist_ok=True)
     out = gdf.copy()
-    out["geometry"] = out.geometry.simplify(0.01, preserve_topology=True)
+    out["geometry"] = out.geometry.simplify(simplify, preserve_topology=True)
     path.write_text(out.to_json(drop_id=True), encoding="utf-8")
 
 
@@ -252,28 +249,34 @@ html, body, #map { height: 100%; margin: 0; background: #08111a; }
 <div id="map"></div>
 <div class="panel">
   <h1>Europe by Watershed and Common Outlet</h1>
-  <p>Hover a macro-basin: the region and rivers clipped inside it light up together. Dense river layer uses HydroRIVERS when available.</p>
-  <p><b>Basis:</b> HydroBASINS drainage topology + HydroRIVERS/Natural Earth rivers. Classification is still an editable policy layer for marginal seas.</p>
+  <p>No country-label basemap. Macro-regions are dissolved outlet groups; thin inner polygons are individual HydroBASINS level-7 basins.</p>
+  <p><b>Basis:</b> HydroBASINS drainage topology + HydroRIVERS/Natural Earth rivers. Rivers are line segments, not zones; basin polygons are the zones.</p>
   <div class="legend" id="legend"></div>
 </div>
 <div class="status" id="status">Hover a watershed region.</div>
 <script>
 const colors = {
- "Mediterranean Europe":"#d98f32", "Black Sea Europe":"#76a95f", "Baltic / East Sea Europe":"#6fb7c7",
+ "Mediterranean Europe":"#d98f32", "Black Sea Europe":"#76a95f", "Baltic / East Sea Europe":"#43aebe",
  "North Sea Europe":"#d6b84f", "Atlantic Europe":"#9273b5", "Irish Sea Europe":"#7e68a8", "Polar Europe":"#9cc9df",
  "Caspian Europe":"#c28b8b", "Dardanelles Europe":"#e07a5f", "Unclassified / Other":"#999999"
 };
 const map = L.map('map', { zoomControl: true }).setView([54, 15], 4);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 10 }).addTo(map);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', { maxZoom: 10 }).addTo(map);
 const legend = document.getElementById('legend');
 Object.entries(colors).forEach(([k,v]) => { const d=document.createElement('div'); d.innerHTML=`<span class="sw" style="background:${v}"></span>${k}`; legend.appendChild(d); });
-let regionLayer, riverLayer;
+let regionLayer, basinLayer, riverLayer;
 let active = null;
-function regionStyle(f){ const c=f.properties.color || colors[f.properties.outlet_region] || '#aaa'; return {color:c, weight:1.5, fillColor:c, fillOpacity:.32}; }
-function riverStyle(f){ const on = f.properties.outlet_region === active; return {color:on ? '#00a6ff' : '#2b78a0', weight:on ? 2.8 : .55, opacity:on ? .95 : .18}; }
-function setActive(name){ active=name; if(riverLayer) riverLayer.setStyle(riverStyle); if(regionLayer) regionLayer.setStyle(f => { const s=regionStyle(f); if(f.properties.outlet_region===active){s.weight=4; s.fillOpacity=.55;} return s; }); document.getElementById('status').innerHTML = name ? `<b>${name}</b><br>Rivers clipped inside this outlet region highlighted.` : 'Hover a watershed region.'; }
-Promise.all([fetch('data/regions.geojson').then(r=>r.json()), fetch('data/rivers.geojson').then(r=>r.json())]).then(([regions,rivers])=>{
+function regionStyle(f){ const c=f.properties.color || colors[f.properties.outlet_region] || '#aaa'; const baltic=f.properties.outlet_region==='Baltic / East Sea Europe'; return {color:c, weight:baltic?2.6:1.7, fillColor:c, fillOpacity:baltic?.42:.34}; }
+function basinStyle(f){ const c=f.properties.color || colors[f.properties.outlet_region] || '#aaa'; return {color:c, weight:.45, fillColor:c, fillOpacity:.05}; }
+function riverStyle(f){ const on = f.properties.outlet_region === active; return {color:on ? '#0097ff' : '#2b78a0', weight:on ? 2.6 : .45, opacity:on ? .95 : .16}; }
+function setActive(name){ active=name; if(riverLayer) riverLayer.setStyle(riverStyle); if(regionLayer) regionLayer.setStyle(f => { const s=regionStyle(f); if(f.properties.outlet_region===active){s.weight=4; s.fillOpacity=.56;} return s; }); document.getElementById('status').innerHTML = name ? `<b>${name}</b><br>Rivers and individual basins in this outlet group highlighted.` : 'Hover a watershed region.'; }
+const bust = Date.now();
+Promise.all([
+  fetch('data/regions.geojson?v='+bust).then(r=>r.json()),
+  fetch('data/basins.geojson?v='+bust).then(r=>r.json()),
+  fetch('data/rivers.geojson?v='+bust).then(r=>r.json())
+]).then(([regions,basins,rivers])=>{
+  basinLayer = L.geoJSON(basins, {style: basinStyle, interactive:false}).addTo(map);
   riverLayer = L.geoJSON(rivers, {style: riverStyle, interactive:false}).addTo(map);
   regionLayer = L.geoJSON(regions, {style: regionStyle, onEachFeature:(f,l)=>{
     l.on('mouseover', ()=>setActive(f.properties.outlet_region));
@@ -292,10 +295,11 @@ Promise.all([fetch('data/regions.geojson').then(r=>r.json()), fetch('data/rivers
 def main():
     site = Path("site")
     data = site / "data"
-    regions, terminals, basin_debug = build_regions(level=6, channel_as="Atlantic Europe")
+    regions, basins, terminals, basin_debug = build_regions(level=7, channel_as="Atlantic Europe")
     rivers = build_rivers(regions)
-    write_geojson(regions, data / "regions.geojson")
-    write_geojson(rivers, data / "rivers.geojson")
+    write_geojson(regions, data / "regions.geojson", simplify=0.006)
+    write_geojson(basins, data / "basins.geojson", simplify=0.004)
+    write_geojson(rivers, data / "rivers.geojson", simplify=0.006)
     terminals.to_csv(data / "terminal_debug_points.csv", index=False)
     basin_debug.to_csv(data / "basin_debug_points.csv", index=False)
     write_index(site)
