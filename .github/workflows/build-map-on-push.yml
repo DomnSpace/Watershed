@@ -1,0 +1,47 @@
+name: Build Europe watershed outlet map on push
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install geospatial system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin libgdal-dev libspatialindex-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build map
+        run: |
+          python src/make_europe_watershed_map.py \
+            --level 6 \
+            --channel-as "Atlantic Europe"
+
+      - name: Upload map artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: europe-watershed-map
+          path: |
+            out/europe_watershed_common_outlets.png
+            out/europe_watershed_common_outlets.svg
+            out/europe_watershed_outlet_regions.gpkg
+            out/basin_classification_table.csv
+          if-no-files-found: error
