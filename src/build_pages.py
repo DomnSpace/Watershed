@@ -55,12 +55,13 @@ def find_first(root, pattern):
 
 def override_region_for_basin(lon, lat, current):
     """Local corrections using each subbasin's own representative point."""
-    # Upper / western Norway: Norwegian Sea / Atlantic margin, not Baltic.
-    # Far north stays Polar; the 62-66.7N coastal belt is the visible problem area.
-    if 3.0 <= lon <= 20.5 and 61.5 <= lat < 66.7:
-        return "Atlantic Europe"
-    if 10.0 <= lon <= 31.5 and lat >= 66.7:
+    # Norway: keep far north polar; keep western/northern Norwegian coast out of Baltic.
+    if 4.0 <= lon <= 32.0 and lat >= 66.2:
         return "Polar Europe"
+    if 3.0 <= lon <= 12.5 and 58.0 <= lat < 62.2:
+        return "North Sea Europe"
+    if 3.0 <= lon <= 18.5 and 62.2 <= lat < 66.2:
+        return "Atlantic Europe"
 
     # Denmark split: west/central Jutland to North Sea; east Denmark/Zealand/Bornholm to Baltic.
     if 7.7 <= lon <= 10.55 and 54.4 <= lat <= 57.9:
@@ -68,13 +69,41 @@ def override_region_for_basin(lon, lat, current):
     if 10.55 < lon <= 15.4 and 54.4 <= lat <= 57.9:
         return "Baltic / East Sea Europe"
 
+    # Mecklenburg / Pomeranian coast and low coastal basins: Baltic, not North Sea/gray.
+    if 10.5 <= lon <= 14.6 and 53.1 <= lat <= 54.9:
+        return "Baltic / East Sea Europe"
+
+    # Britain: force local west/east split before broad Atlantic/North Sea leakage.
+    # Eastern England and east Scotland drain to North Sea.
+    if -2.6 <= lon <= 1.8 and 50.6 <= lat <= 56.2:
+        return "North Sea Europe"
+    if -4.0 <= lon <= 1.8 and 56.0 <= lat <= 59.4:
+        return "North Sea Europe"
+    # Irish Sea micro-outlet: east Ireland, Wales west/north, Mersey/Dee/Solway/Clyde-facing zone.
+    if -7.7 <= lon <= -2.0 and 50.0 <= lat <= 56.5:
+        return "Irish Sea Europe"
+    if -8.1 <= lon <= -3.4 and 55.7 <= lat <= 59.0:
+        return "Irish Sea Europe"
+    # Outer west Britain/Ireland remains Atlantic.
+    if -11.2 <= lon < -7.7 and 50.0 <= lat <= 56.8:
+        return "Atlantic Europe"
+    if -10.8 <= lon < -8.0 and 56.0 <= lat <= 61.0:
+        return "Atlantic Europe"
+    if -8.8 <= lon < -4.0 and 58.0 <= lat <= 61.0:
+        return "Atlantic Europe"
+
     # Maas / Meuse basin and lower Scheldt/Rhine-Meuse delta: North Sea.
-    # Widened because HydroBASINS representative points can sit inland/south of the obvious channel.
-    if 2.4 <= lon <= 8.8 and 47.55 <= lat <= 52.9:
+    if 2.2 <= lon <= 8.9 and 47.35 <= lat <= 53.0:
         return "North Sea Europe"
 
     # Maritsa / Meric / Evros: Aegean / Mediterranean, not Dardanelles or Black Sea.
     if 23.0 <= lon <= 27.6 and 40.1 <= lat <= 42.9:
+        return "Mediterranean Europe"
+
+    # Montpellier / Languedoc coastal rivers and Rhône-Saône corridor: Mediterranean.
+    if 2.2 <= lon <= 5.2 and 42.7 <= lat <= 44.5:
+        return "Mediterranean Europe"
+    if 3.6 <= lon <= 6.9 and 43.0 <= lat <= 47.9:
         return "Mediterranean Europe"
 
     # Garonne-Dordogne / Bordeaux and Charente: Atlantic.
@@ -86,13 +115,6 @@ def override_region_for_basin(lon, lat, current):
     # Loire: Atlantic, including inland representative points.
     if -4.6 <= lon <= 3.4 and 46.2 <= lat <= 49.05:
         return "Atlantic Europe"
-
-    # Liverpool-Manchester / Mersey-Dee-Irish Sea-facing Britain.
-    if -4.4 <= lon <= -1.45 and 52.5 <= lat <= 54.9:
-        return "Irish Sea Europe"
-    # Cumbria, Solway and Clyde-facing belt.
-    if -5.9 <= lon <= -2.8 and 54.4 <= lat <= 56.8:
-        return "Irish Sea Europe"
 
     return current
 
@@ -155,7 +177,6 @@ def load_hydrorivers():
     rivers["scalerank"] = 8
     if "ORD_STRA" in rivers.columns:
         rivers["scalerank"] = 10 - rivers["ORD_STRA"].fillna(1).astype(float).clip(1, 9)
-    # Keep a dense but not insane river network. This should include Saone-scale tributaries.
     keep = pd.Series(True, index=rivers.index)
     if "ORD_STRA" in rivers.columns:
         keep &= rivers["ORD_STRA"].fillna(0) >= 4
