@@ -58,18 +58,21 @@ def override_region_for_basin(lon, lat, current):
     if 49.0 <= lon <= 55.6 and 33.7 <= lat < 36.45:
         return "Tehran / Central Iran Sink"
 
-    # Gulf of Bothnia / Bothnian Bay and most Finnish-Swedish Baltic drainage.
-    # Must run before Norway/Polar rules so the Bottnischer Meerbusen coast stays East Sea.
-    if 14.5 <= lon <= 32.5 and 58.0 <= lat < 66.85:
-        return "Baltic / East Sea Europe"
-
-    # Norway: prevent Baltic leakage. Far north polar; SW Norway North Sea; mid/west Norway Atlantic.
+    # Norway coastal corrections must run before the Bothnian/Baltic rule.
+    # This prevents two west-coast Norwegian basins from being swallowed by the Baltic override.
     if 4.0 <= lon <= 32.0 and lat >= 66.85:
         return "Polar Europe"
     if 3.0 <= lon <= 12.5 and 58.0 <= lat < 62.2:
         return "North Sea Europe"
-    if 3.0 <= lon <= 18.5 and 62.2 <= lat < 66.2:
+    if 3.0 <= lon <= 18.9 and 62.2 <= lat < 66.85:
         return "Atlantic Europe"
+
+    # Gulf of Bothnia / Bothnian Bay and Finnish-Swedish Baltic drainage.
+    # Keep this east of the Scandinavian divide at higher latitudes.
+    if 18.2 <= lon <= 32.5 and 62.0 <= lat < 66.85:
+        return "Baltic / East Sea Europe"
+    if 14.5 <= lon <= 32.5 and 58.0 <= lat < 62.0:
+        return "Baltic / East Sea Europe"
 
     # Denmark: west/central Jutland to North Sea; islands/east coast to Baltic.
     if 7.7 <= lon <= 10.55 and 54.4 <= lat <= 57.9:
@@ -82,11 +85,14 @@ def override_region_for_basin(lon, lat, current):
         return "Baltic / East Sea Europe"
 
     # Britain and Ireland split.
+    # Keep Mersey / Liverpool-Manchester as Irish Sea, but stop Irish Sea from stealing east-draining England.
+    if -3.25 <= lon <= -2.0 and 53.0 <= lat <= 53.9:
+        return "Irish Sea Europe"
     if -2.6 <= lon <= 1.8 and 50.6 <= lat <= 56.2:
         return "North Sea Europe"
     if -4.0 <= lon <= 1.8 and 56.0 <= lat <= 59.4:
         return "North Sea Europe"
-    if -7.7 <= lon <= -2.0 and 50.0 <= lat <= 56.5:
+    if -7.7 <= lon <= -2.8 and 50.0 <= lat <= 56.5:
         return "Irish Sea Europe"
     if -8.1 <= lon <= -3.4 and 55.7 <= lat <= 59.0:
         return "Irish Sea Europe"
