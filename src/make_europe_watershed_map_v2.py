@@ -4,11 +4,12 @@ import make_europe_watershed_map as base
 
 
 def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Europe") -> str:
-    # Caspian Europe is now a real class, not gray leftover.
-    if 44.0 <= lon <= 70.5 and 38.0 <= lat < 62.5:
+    # Caspian Europe is now a real class, not gray leftover. Extended southward
+    # for Kura-Aras / south-Caspian edge cases visible on the Europe crop.
+    if 44.0 <= lon <= 70.5 and 35.0 <= lat < 62.5:
         return "Caspian Europe"
 
-    # Polar / Arctic drainage.
+    # Polar / Arctic drainage: Barents, White Sea, high Scandinavian and Russian north.
     if lat >= 66.7:
         return "Polar Europe"
     if lat >= 63.0 and lon >= 20.0:
@@ -21,45 +22,64 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
         return "Black Sea Europe"
     if 20.0 <= lon < 26.0 and 43.0 <= lat <= 49.8:
         return "Black Sea Europe"
+    # Dardania / Morava-Serbia correction: most of this interior drains to the Danube.
+    # Kept north of the Vardar/Aegean zone so Macedonia/Greek outlets stay Mediterranean.
+    if 20.0 <= lon <= 22.9 and 42.0 <= lat <= 44.8:
+        return "Black Sea Europe"
 
-    # Baltic / East Sea widened southward for Poland, Oder, Vistula.
-    if 9.0 <= lon <= 31.8 and 50.2 <= lat <= 66.7:
+    # Iberian Mediterranean coast and Ebro/Catalonia/Andalusia must be protected
+    # before the broad Atlantic Biscay rule, otherwise Granada-Barcelona turns wrong.
+    if -6.5 <= lon <= 3.7 and 35.0 <= lat <= 42.25:
+        return "Mediterranean Europe"
+    if -1.2 <= lon <= 37.5 and 34.0 <= lat <= 46.8:
+        return "Mediterranean Europe"
+
+    # North Sea must run before Baltic, otherwise Elbe/Hamburg/Jutland terminals get stolen.
+    # Rhine, Maas/Meuse, Scheldt, Elbe, Weser, Ems, German Bight, west/south Denmark.
+    if -3.6 <= lon <= 11.9 and 50.0 <= lat <= 63.0:
+        return "North Sea Europe"
+    if 11.5 < lon <= 13.5 and 53.3 <= lat <= 57.2:
+        return "North Sea Europe"
+    # Eastern Britain / east Scotland, with west Britain handled below as Atlantic.
+    if -2.0 <= lon <= 2.0 and 52.0 <= lat <= 56.0:
+        return "North Sea Europe"
+    if -4.0 <= lon <= 2.0 and 56.0 <= lat <= 61.0:
+        return "North Sea Europe"
+    # SE Norway / Skagerrak-Oslofjord side.
+    if 8.0 <= lon <= 12.8 and 57.5 <= lat <= 62.5:
+        return "North Sea Europe"
+
+    # Baltic / East Sea: Poland/Oder/Vistula, Baltic states, Gulf of Finland.
+    # Starts east of the Elbe/Jutland danger zone for low latitudes.
+    if 13.2 <= lon <= 31.8 and 50.2 <= lat <= 66.7:
+        return "Baltic / East Sea Europe"
+    if 9.0 <= lon < 13.2 and 56.8 <= lat <= 66.7:
         return "Baltic / East Sea Europe"
     if 24.0 <= lon <= 32.8 and 58.0 <= lat <= 61.8:
         return "Baltic / East Sea Europe"
 
-    # North Sea: Rhine, Maas/Meuse, Scheldt, Elbe/Weser, Jutland, eastern Britain.
-    if -3.6 <= lon <= 11.8 and 50.0 <= lat <= 62.9:
-        return "North Sea Europe"
-    if 11.5 < lon <= 13.5 and 53.3 <= lat <= 57.2:
-        return "North Sea Europe"
-    if -4.2 <= lon <= 1.8 and 54.0 <= lat <= 60.9:
-        return "North Sea Europe"
+    # Western Norway drains to Norwegian Sea / Atlantic margin, not the North Sea block.
+    if 2.0 <= lon < 8.0 and 58.0 <= lat < 66.7:
+        return "Atlantic Europe"
 
-    # Channel policy, after Maas/Scheldt so they do not turn pink.
+    # Atlantic Britain/Ireland: Liverpool-Manchester/Mersey, Irish Sea, west Scotland/Wales.
+    if -8.8 <= lon < -2.0 and 50.0 <= lat <= 56.2:
+        return "Atlantic Europe"
+    if -8.8 <= lon < -4.0 and 56.0 <= lat <= 61.0:
+        return "Atlantic Europe"
+
+    # English Channel policy zone. This runs after Maas/Scheldt/Rhine and Britain rules.
     if -6.5 <= lon <= 1.8 and 48.0 <= lat <= 50.9:
         return channel_as
 
-    # Atlantic: north Spain, west France, Ireland, west Britain, Iceland.
-    if -10.5 <= lon <= 1.8 and 41.2 <= lat <= 50.9:
+    # Atlantic: Cantabrian/Biscay north Spain and west France, but not Catalonia/Ebro.
+    if -10.5 <= lon <= -1.2 and 42.25 <= lat <= 50.9:
         return "Atlantic Europe"
     if -12.0 <= lon <= -1.0 and 35.0 <= lat <= 43.8:
         return "Atlantic Europe"
     if lon <= -2.5 and 35.0 <= lat <= 66.8:
         return "Atlantic Europe"
     if -25.5 <= lon <= -10.0 and 63.0 <= lat <= 67.5:
-        return "Atlantic Europe"
-
-    # Mediterranean: deliberately evaluated after Atlantic to protect Biscay/Cantabrian basins.
-    if -1.2 <= lon <= 37.5 and 34.0 <= lat <= 46.8:
-        return "Mediterranean Europe"
-    if -6.5 <= lon < -1.2 and 35.0 <= lat <= 41.2:
-        return "Mediterranean Europe"
-    if -3.5 <= lon <= 5.0 and 36.0 <= lat <= 43.5:
-        return "Mediterranean Europe"
-
-    # Norway Atlantic coast and islands not otherwise polar/north-sea.
-    if 2.0 <= lon <= 20.0 and 58.0 <= lat < 66.7:
         return "Atlantic Europe"
 
     return "Unclassified / Other"
