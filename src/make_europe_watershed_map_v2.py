@@ -17,9 +17,13 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
     if lat >= 68.0 and lon >= 10.0:
         return "Polar Europe"
 
+    # Maritsa / Meric / Evros basin: exits to the northern Aegean, so Mediterranean.
+    # This must run before Dardanelles/Black Sea because its terminal point can sit near Thrace.
+    if 24.0 <= lon <= 27.6 and 40.4 <= lat <= 42.9:
+        return "Mediterranean Europe"
+
     # Dardanelles / Marmara straits: deliberately tiny separate outlet class.
-    # Tightened so it does not eat the northern Aegean / Greek Mediterranean basins.
-    if 26.0 <= lon <= 29.9 and 40.05 <= lat <= 41.45:
+    if 26.9 <= lon <= 29.7 and 40.15 <= lat <= 41.35:
         return "Dardanelles Europe"
 
     # Black Sea, including Danube-class terminals that sit west/north of the literal coast.
@@ -70,7 +74,6 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
         return "Atlantic Europe"
 
     # Irish Sea micro-outlet: east Ireland, west Britain, Mersey/Dee/Solway/Clyde-facing zone.
-    # This is a map-reading category inside the larger Atlantic margin.
     if -7.7 <= lon <= -2.0 and 50.0 <= lat <= 56.4:
         return "Irish Sea Europe"
     if -8.0 <= lon <= -3.6 and 56.0 <= lat <= 59.0:
@@ -88,9 +91,11 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
     if -6.5 <= lon <= 1.8 and 48.0 <= lat <= 50.9:
         return channel_as
 
-    # French Atlantic cleanup: Loire, Charente, Dordogne/Garonne terminal polygons often
-    # have inland representative points, so the Atlantic window must reach inland.
-    if -5.5 <= lon <= 2.3 and 43.0 <= lat <= 48.6:
+    # Loire and west/central France Atlantic cleanup. The Loire terminal polygon can have
+    # an inland representative point; keep the whole Loire–Charente–Garonne Atlantic side clean.
+    if -5.5 <= lon <= 2.8 and 43.0 <= lat <= 48.9:
+        return "Atlantic Europe"
+    if -4.8 <= lon <= 3.1 and 46.8 <= lat <= 48.95:
         return "Atlantic Europe"
     # Atlantic: Cantabrian/Biscay north Spain and west France, but not Catalonia/Ebro.
     if -10.5 <= lon <= -1.2 and 42.25 <= lat <= 50.9:
