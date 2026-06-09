@@ -17,6 +17,12 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
     if lat >= 68.0 and lon >= 10.0:
         return "Polar Europe"
 
+    # Dardanelles / Marmara straits: a deliberately tiny separate outlet class.
+    # This is not the Adriatic/Ionian Balkan coast; those remain Mediterranean.
+    # It must run before the Black Sea window, otherwise the straits get swallowed.
+    if 25.5 <= lon <= 30.4 and 39.4 <= lat <= 41.7:
+        return "Dardanelles Europe"
+
     # Black Sea, including Danube-class terminals that sit west/north of the literal coast.
     if 26.0 <= lon <= 43.8 and 40.0 <= lat <= 49.8:
         return "Black Sea Europe"
@@ -27,9 +33,16 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
     if 20.0 <= lon <= 22.9 and 42.0 <= lat <= 44.8:
         return "Black Sea Europe"
 
-    # Iberian Mediterranean coast and Ebro/Catalonia/Andalusia must be protected
-    # before the broad Atlantic Biscay rule, otherwise Granada-Barcelona turns wrong.
-    if -6.5 <= lon <= 3.7 and 35.0 <= lat <= 42.25:
+    # Guadalquivir / southwest Iberia must remain Atlantic, not Mediterranean.
+    # This guard must run before the broad Spanish Mediterranean rule.
+    if -8.5 <= lon <= -5.0 and 35.5 <= lat <= 39.4:
+        return "Atlantic Europe"
+    if -9.6 <= lon <= -6.5 and 36.0 <= lat <= 39.8:
+        return "Atlantic Europe"
+
+    # Iberian Mediterranean coast and Ebro/Catalonia protected from broad Atlantic rules.
+    # Starts east of the Guadalquivir/Guadiana Atlantic window.
+    if -5.0 < lon <= 3.7 and 35.0 <= lat <= 42.25:
         return "Mediterranean Europe"
     if -1.2 <= lon <= 37.5 and 34.0 <= lat <= 46.8:
         return "Mediterranean Europe"
@@ -87,6 +100,7 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
 
 def install_v2_classifier() -> None:
     base.COLORS["Caspian Europe"] = "#c28b8b"
+    base.COLORS["Dardanelles Europe"] = "#e07a5f"
     base.COLORS["Unclassified / Other"] = base.COLORS.pop("Caspian / Other", "#b7b7b7")
     base.classify_terminal = classify_terminal_v2
 
