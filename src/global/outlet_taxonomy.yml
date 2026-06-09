@@ -1,0 +1,149 @@
+# Global watershed outlet taxonomy
+# First-pass global classes for a UN-symbol-style world watershed map.
+# These rules are deliberately coarse; local corrections should be added by hover-debugging.
+
+classes:
+  arctic:
+    label: Arctic Ocean
+    color: "#9cc9df"
+  north_atlantic:
+    label: North Atlantic Ocean
+    color: "#9273b5"
+  south_atlantic:
+    label: South Atlantic Ocean
+    color: "#7f62a8"
+  mediterranean:
+    label: Mediterranean Sea
+    color: "#d98f32"
+  black_sea:
+    label: Black Sea
+    color: "#76a95f"
+  baltic:
+    label: Baltic / East Sea
+    color: "#43aebe"
+  north_sea:
+    label: North Sea
+    color: "#d6b84f"
+  indian:
+    label: Indian Ocean
+    color: "#d09a46"
+  north_pacific:
+    label: North Pacific Ocean
+    color: "#4aa6c7"
+  south_pacific:
+    label: South Pacific Ocean
+    color: "#3f91b5"
+  southern:
+    label: Southern Ocean
+    color: "#b7d6e6"
+  caspian:
+    label: Caspian Sea Basin
+    color: "#c28b8b"
+  aral:
+    label: Aral Sea Basin
+    color: "#b9967a"
+  central_asia_sink:
+    label: Central Asian Internal Basins
+    color: "#b8a06f"
+  iran_sink:
+    label: Iranian Plateau Sinks
+    color: "#d2a15e"
+  dead_sea_sink:
+    label: Dead Sea / Jordan Rift Sink
+    color: "#b36f6f"
+  lake_chad_sink:
+    label: Lake Chad Basin
+    color: "#c7a867"
+  great_basin_sink:
+    label: Great Basin / Interior West
+    color: "#b48a65"
+  lake_eyre_sink:
+    label: Lake Eyre / Australian Interior
+    color: "#c49a5c"
+  altiplano_sink:
+    label: Altiplano Internal Basins
+    color: "#a98d6e"
+  unclassified:
+    label: Unclassified / Other
+    color: "#999999"
+
+# Rule order matters. First matching bbox wins.
+# bbox format: [min_lon, min_lat, max_lon, max_lat]
+terminal_bbox_rules:
+  # Endorheic sinks first
+  - class: caspian
+    name: Caspian Sea basin
+    bbox: [44.0, 35.0, 70.5, 62.8]
+  - class: aral
+    name: Aral Sea basin
+    bbox: [55.0, 40.0, 70.5, 48.8]
+  - class: central_asia_sink
+    name: Tarim / Qaidam / Mongolian internal basins
+    bbox: [72.0, 34.0, 106.0, 50.5]
+  - class: iran_sink
+    name: Iranian Plateau internal sinks
+    bbox: [48.0, 25.0, 63.5, 36.8]
+  - class: dead_sea_sink
+    name: Dead Sea / Jordan Rift
+    bbox: [34.5, 29.0, 36.5, 33.8]
+  - class: lake_chad_sink
+    name: Lake Chad basin
+    bbox: [8.0, 10.0, 18.5, 16.5]
+  - class: great_basin_sink
+    name: Great Basin interior West
+    bbox: [-121.0, 35.0, -111.0, 43.5]
+  - class: lake_eyre_sink
+    name: Lake Eyre Australian interior
+    bbox: [133.0, -35.0, 144.5, -20.0]
+  - class: altiplano_sink
+    name: Altiplano / Titicaca-Poopo internal basins
+    bbox: [-72.5, -23.5, -65.0, -14.0]
+
+  # Europe / western Asia marginal seas
+  - class: baltic
+    name: Baltic / East Sea
+    bbox: [9.0, 53.0, 32.5, 66.9]
+  - class: north_sea
+    name: North Sea
+    bbox: [-4.5, 50.0, 13.5, 63.5]
+  - class: black_sea
+    name: Black Sea
+    bbox: [26.0, 40.0, 43.8, 49.8]
+  - class: mediterranean
+    name: Mediterranean Sea
+    bbox: [-6.5, 30.0, 37.5, 46.8]
+
+  # Polar / major oceans
+  - class: arctic
+    name: Arctic Ocean north belt
+    bbox: [-180.0, 66.5, 180.0, 90.0]
+  - class: southern
+    name: Southern Ocean south belt
+    bbox: [-180.0, -90.0, 180.0, -60.0]
+
+  # Atlantic
+  - class: north_atlantic
+    name: North Atlantic broad
+    bbox: [-105.0, 0.0, 25.0, 66.5]
+  - class: south_atlantic
+    name: South Atlantic broad
+    bbox: [-75.0, -60.0, 25.0, 0.0]
+
+  # Indian
+  - class: indian
+    name: Indian Ocean broad
+    bbox: [25.0, -60.0, 120.0, 32.0]
+
+  # Pacific
+  - class: north_pacific
+    name: North Pacific broad west/east
+    bbox: [120.0, 0.0, 180.0, 66.5]
+  - class: north_pacific
+    name: North Pacific Americas side
+    bbox: [-180.0, 0.0, -105.0, 66.5]
+  - class: south_pacific
+    name: South Pacific west/east
+    bbox: [120.0, -60.0, 180.0, 0.0]
+  - class: south_pacific
+    name: South Pacific Americas side
+    bbox: [-180.0, -60.0, -75.0, 0.0]
