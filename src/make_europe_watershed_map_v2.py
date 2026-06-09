@@ -65,7 +65,12 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
     return "Unclassified / Other"
 
 
-base.COLORS["Caspian Europe"] = "#c28b8b"
-base.COLORS["Unclassified / Other"] = base.COLORS.pop("Caspian / Other", "#b7b7b7")
-base.classify_terminal = classify_terminal_v2
-base.main()
+def install_v2_classifier() -> None:
+    base.COLORS["Caspian Europe"] = "#c28b8b"
+    base.COLORS["Unclassified / Other"] = base.COLORS.pop("Caspian / Other", "#b7b7b7")
+    base.classify_terminal = classify_terminal_v2
+
+
+if __name__ == "__main__":
+    install_v2_classifier()
+    base.main()
