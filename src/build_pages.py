@@ -58,18 +58,20 @@ def override_region_for_basin(lon, lat, current):
     if 49.0 <= lon <= 55.6 and 33.7 <= lat < 36.45:
         return "Tehran / Central Iran Sink"
 
-    # Norway coastal corrections: narrow coastal strips only, not a broad rectangle over Sweden.
+    # Norway coastal corrections: stepped western wedge, wider in Nordland/Troms but not across Sweden.
     if 4.0 <= lon <= 32.0 and lat >= 66.85:
         return "Polar Europe"
     if 3.0 <= lon <= 10.8 and 58.0 <= lat < 62.2:
         return "North Sea Europe"
-    if 3.0 <= lon <= 10.9 and 62.2 <= lat < 66.85:
+    if 3.0 <= lon <= 12.4 and 62.2 <= lat < 64.3:
         return "Atlantic Europe"
-    if 10.9 < lon <= 13.6 and 64.3 <= lat < 66.85:
+    if 3.0 <= lon <= 16.2 and 64.3 <= lat < 66.85:
         return "Atlantic Europe"
 
     # Gulf of Bothnia / Bothnian Bay and Finnish-Swedish Baltic drainage.
-    if 13.6 <= lon <= 32.5 and 62.0 <= lat < 66.85:
+    if 16.2 <= lon <= 32.5 and 64.3 <= lat < 66.85:
+        return "Baltic / East Sea Europe"
+    if 12.4 <= lon <= 32.5 and 62.0 <= lat < 64.3:
         return "Baltic / East Sea Europe"
     if 14.5 <= lon <= 32.5 and 58.0 <= lat < 62.0:
         return "Baltic / East Sea Europe"
