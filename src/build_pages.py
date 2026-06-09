@@ -11,7 +11,10 @@ from shapely.geometry import box
 import make_europe_watershed_map as base
 from make_europe_watershed_map_v2 import classify_terminal_v2
 
-RIVERS_URL = "https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_rivers_lake_centerlines.zip"
+HYDRORIVERS_URLS = [
+    "https://data.hydrosheds.org/file/HydroRIVERS/HydroRIVERS_v10_eu_shp.zip",
+]
+NATURAL_EARTH_RIVERS_URL = "https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_rivers_lake_centerlines.zip"
 EUROPE_BBOX = base.EUROPE_BBOX
 
 COLORS = {
@@ -28,13 +31,21 @@ COLORS = {
 }
 
 
-def download_zip(url, outdir, label):
+def download_zip(urls, outdir, label):
     outdir.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {label}: {url}")
-    r = requests.get(url, timeout=180)
-    r.raise_for_status()
-    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-        z.extractall(outdir)
+    last_err = None
+    for url in urls if isinstance(urls, list) else [urls]:
+        print(f"Downloading {label}: {url}")
+        try:
+            r = requests.get(url, timeout=180)
+            r.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+                z.extractall(outdir)
+            return outdir
+        except Exception as e:
+            last_err = e
+            print(f"  failed: {e}")
+    raise RuntimeError(f"Could not download {label}: {last_err}")
 
 
 def find_first(root, pattern):
@@ -43,36 +54,44 @@ def find_first(root, pattern):
 
 
 def override_region_for_basin(lon, lat, current):
-    """Local corrections using each subbasin's own representative point.
+    """Local corrections using each subbasin's own representative point."""
+    # Upper / western Norway: Norwegian Sea / Atlantic margin, not Baltic.
+    # Far north stays Polar; the 62-66.7N coastal belt is the visible problem area.
+    if 3.0 <= lon <= 20.5 and 61.5 <= lat < 66.7:
+        return "Atlantic Europe"
+    if 10.0 <= lon <= 31.5 and lat >= 66.7:
+        return "Polar Europe"
 
-    Terminal-point classification is good at large scale, but individual coastal
-    basins can be stolen by neighbouring marginal-sea boxes. These overrides are
-    intentionally geographic and narrow enough to fix visible errors without
-    changing the hydrological topology.
-    """
+    # Denmark split: west/central Jutland to North Sea; east Denmark/Zealand/Bornholm to Baltic.
+    if 7.7 <= lon <= 10.55 and 54.4 <= lat <= 57.9:
+        return "North Sea Europe"
+    if 10.55 < lon <= 15.4 and 54.4 <= lat <= 57.9:
+        return "Baltic / East Sea Europe"
+
     # Maas / Meuse basin and lower Scheldt/Rhine-Meuse delta: North Sea.
-    if 3.0 <= lon <= 7.8 and 48.0 <= lat <= 52.4:
+    # Widened because HydroBASINS representative points can sit inland/south of the obvious channel.
+    if 2.4 <= lon <= 8.8 and 47.55 <= lat <= 52.9:
         return "North Sea Europe"
 
     # Maritsa / Meric / Evros: Aegean / Mediterranean, not Dardanelles or Black Sea.
-    if 23.0 <= lon <= 27.4 and 40.2 <= lat <= 42.8:
+    if 23.0 <= lon <= 27.6 and 40.1 <= lat <= 42.9:
         return "Mediterranean Europe"
 
     # Garonne-Dordogne / Bordeaux and Charente: Atlantic.
-    if -2.2 <= lon <= 1.8 and 43.0 <= lat <= 46.2:
+    if -2.4 <= lon <= 2.0 and 42.85 <= lat <= 46.25:
         return "Atlantic Europe"
-    if -1.8 <= lon <= 0.7 and 44.0 <= lat <= 46.9:
+    if -2.0 <= lon <= 0.9 and 44.0 <= lat <= 46.95:
         return "Atlantic Europe"
 
     # Loire: Atlantic, including inland representative points.
-    if -4.4 <= lon <= 3.2 and 46.4 <= lat <= 48.9:
+    if -4.6 <= lon <= 3.4 and 46.2 <= lat <= 49.05:
         return "Atlantic Europe"
 
     # Liverpool-Manchester / Mersey-Dee-Irish Sea-facing Britain.
-    if -4.2 <= lon <= -1.6 and 52.7 <= lat <= 54.8:
+    if -4.4 <= lon <= -1.45 and 52.5 <= lat <= 54.9:
         return "Irish Sea Europe"
     # Cumbria, Solway and Clyde-facing belt.
-    if -5.8 <= lon <= -2.8 and 54.4 <= lat <= 56.6:
+    if -5.9 <= lon <= -2.8 and 54.4 <= lat <= 56.8:
         return "Irish Sea Europe"
 
     return current
@@ -109,7 +128,6 @@ def build_regions(level=6, channel_as="Atlantic Europe"):
     gdf["terminal_id"] = gdf["HYBAS_ID"].astype(int).map(terminals)
     gdf["outlet_region"] = gdf["terminal_id"].map(term_region)
 
-    # Apply local basin overrides from each basin's own representative point.
     own_reps = gdf.geometry.representative_point()
     gdf["rep_lon"] = own_reps.x
     gdf["rep_lat"] = own_reps.y
@@ -124,31 +142,68 @@ def build_regions(level=6, channel_as="Atlantic Europe"):
     return regions, pd.DataFrame(terminal_rows), basin_debug
 
 
-def build_rivers(regions):
+def load_hydrorivers():
+    data = Path("data") / "hydrorivers_eu"
+    shp = find_first(data, "HydroRIVERS_v10_eu.shp") or find_first(data, "*.shp")
+    if shp is None:
+        download_zip(HYDRORIVERS_URLS, data, "HydroRIVERS Europe")
+        shp = find_first(data, "HydroRIVERS_v10_eu.shp") or find_first(data, "*.shp")
+    if shp is None:
+        raise FileNotFoundError("HydroRIVERS shapefile not found")
+    rivers = gpd.read_file(shp).to_crs("EPSG:4326")
+    rivers["name"] = ""
+    rivers["scalerank"] = 8
+    if "ORD_STRA" in rivers.columns:
+        rivers["scalerank"] = 10 - rivers["ORD_STRA"].fillna(1).astype(float).clip(1, 9)
+    # Keep a dense but not insane river network. This should include Saone-scale tributaries.
+    keep = pd.Series(True, index=rivers.index)
+    if "ORD_STRA" in rivers.columns:
+        keep &= rivers["ORD_STRA"].fillna(0) >= 4
+    if "DIS_AV_CMS" in rivers.columns:
+        keep |= rivers["DIS_AV_CMS"].fillna(0) >= 20
+    if "LENGTH_KM" in rivers.columns:
+        keep |= rivers["LENGTH_KM"].fillna(0) >= 35
+    rivers = rivers[keep].copy()
+    return rivers[["name", "scalerank", "geometry"]]
+
+
+def load_naturalearth_rivers():
     data = Path("data") / "naturalearth_rivers"
     shp = find_first(data, "ne_10m_rivers_lake_centerlines.shp")
     if shp is None:
-        download_zip(RIVERS_URL, data, "Natural Earth rivers")
+        download_zip(NATURAL_EARTH_RIVERS_URL, data, "Natural Earth rivers")
         shp = find_first(data, "ne_10m_rivers_lake_centerlines.shp")
+    if shp is None:
+        raise FileNotFoundError("Natural Earth rivers shapefile not found")
     rivers = gpd.read_file(shp).to_crs("EPSG:4326")
+    rivers["name"] = rivers.get("name", "").fillna("")
+    return rivers[["name", "scalerank", "geometry"]]
+
+
+def build_rivers(regions):
+    try:
+        rivers = load_hydrorivers()
+        river_source = "HydroRIVERS Europe"
+    except Exception as e:
+        print(f"HydroRIVERS failed, falling back to Natural Earth rivers: {e}")
+        rivers = load_naturalearth_rivers()
+        river_source = "Natural Earth rivers"
+
     bbox = gpd.GeoDataFrame(geometry=[box(*EUROPE_BBOX)], crs="EPSG:4326")
     rivers = gpd.overlay(rivers, bbox, how="intersection", keep_geom_type=True)
     rivers = rivers[~rivers.geometry.is_empty].copy()
-    rivers["name"] = rivers.get("name", "").fillna("")
-    rivers = rivers[["name", "scalerank", "geometry"]]
 
-    # Clip river geometries to outlet regions. This avoids the old bug where a
-    # full river line was duplicated into every region it merely intersected.
     clipped = gpd.overlay(rivers, regions[["outlet_region", "geometry"]], how="intersection", keep_geom_type=True)
     clipped = clipped[~clipped.geometry.is_empty].copy()
     clipped["name"] = clipped["name"].fillna("")
-    return clipped[["name", "scalerank", "outlet_region", "geometry"]]
+    clipped["river_source"] = river_source
+    return clipped[["name", "scalerank", "river_source", "outlet_region", "geometry"]]
 
 
 def write_geojson(gdf, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     out = gdf.copy()
-    out["geometry"] = out.geometry.simplify(0.015, preserve_topology=True)
+    out["geometry"] = out.geometry.simplify(0.01, preserve_topology=True)
     path.write_text(out.to_json(drop_id=True), encoding="utf-8")
 
 
@@ -176,8 +231,8 @@ html, body, #map { height: 100%; margin: 0; background: #08111a; }
 <div id="map"></div>
 <div class="panel">
   <h1>Europe by Watershed and Common Outlet</h1>
-  <p>Hover a macro-basin: the region and rivers clipped inside it light up together. Misclassified basins should now be visible without duplicate whole-river artifacts.</p>
-  <p><b>Basis:</b> HydroBASINS drainage topology + Natural Earth rivers. Classification is still an editable policy layer for marginal seas.</p>
+  <p>Hover a macro-basin: the region and rivers clipped inside it light up together. Dense river layer uses HydroRIVERS when available.</p>
+  <p><b>Basis:</b> HydroBASINS drainage topology + HydroRIVERS/Natural Earth rivers. Classification is still an editable policy layer for marginal seas.</p>
   <div class="legend" id="legend"></div>
 </div>
 <div class="status" id="status">Hover a watershed region.</div>
@@ -195,7 +250,7 @@ Object.entries(colors).forEach(([k,v]) => { const d=document.createElement('div'
 let regionLayer, riverLayer;
 let active = null;
 function regionStyle(f){ const c=f.properties.color || colors[f.properties.outlet_region] || '#aaa'; return {color:c, weight:1.5, fillColor:c, fillOpacity:.32}; }
-function riverStyle(f){ const on = f.properties.outlet_region === active; return {color:on ? '#00a6ff' : '#2b78a0', weight:on ? 3.5 : .8, opacity:on ? .95 : .22}; }
+function riverStyle(f){ const on = f.properties.outlet_region === active; return {color:on ? '#00a6ff' : '#2b78a0', weight:on ? 2.8 : .55, opacity:on ? .95 : .18}; }
 function setActive(name){ active=name; if(riverLayer) riverLayer.setStyle(riverStyle); if(regionLayer) regionLayer.setStyle(f => { const s=regionStyle(f); if(f.properties.outlet_region===active){s.weight=4; s.fillOpacity=.55;} return s; }); document.getElementById('status').innerHTML = name ? `<b>${name}</b><br>Rivers clipped inside this outlet region highlighted.` : 'Hover a watershed region.'; }
 Promise.all([fetch('data/regions.geojson').then(r=>r.json()), fetch('data/rivers.geojson').then(r=>r.json())]).then(([regions,rivers])=>{
   riverLayer = L.geoJSON(rivers, {style: riverStyle, interactive:false}).addTo(map);
