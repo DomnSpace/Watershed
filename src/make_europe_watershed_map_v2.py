@@ -19,7 +19,7 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
 
     # Maritsa / Meric / Evros basin: exits to the northern Aegean, so Mediterranean.
     # This must run before Dardanelles/Black Sea because its terminal point can sit near Thrace.
-    if 24.0 <= lon <= 27.6 and 40.4 <= lat <= 42.9:
+    if 24.0 <= lon <= 27.8 and 40.2 <= lat <= 43.1:
         return "Mediterranean Europe"
 
     # Dardanelles / Marmara straits: deliberately tiny separate outlet class.
@@ -34,6 +34,13 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
     # Dardania / Morava-Serbia correction: most of this interior drains to the Danube.
     if 20.0 <= lon <= 22.9 and 42.0 <= lat <= 44.8:
         return "Black Sea Europe"
+
+    # French Atlantic cleanup must run before the broad Mediterranean rule below.
+    # Garonne, Dordogne, Charente and Loire terminal polygons often have inland representative points.
+    if -5.8 <= lon <= 3.2 and 42.8 <= lat <= 49.05:
+        return "Atlantic Europe"
+    if -2.2 <= lon <= 2.8 and 43.0 <= lat <= 45.8:
+        return "Atlantic Europe"
 
     # Guadalquivir / southwest Iberia must remain Atlantic, not Mediterranean.
     if -8.5 <= lon <= -5.0 and 35.5 <= lat <= 39.4:
@@ -91,12 +98,6 @@ def classify_terminal_v2(lon: float, lat: float, channel_as: str = "Atlantic Eur
     if -6.5 <= lon <= 1.8 and 48.0 <= lat <= 50.9:
         return channel_as
 
-    # Loire and west/central France Atlantic cleanup. The Loire terminal polygon can have
-    # an inland representative point; keep the whole Loire–Charente–Garonne Atlantic side clean.
-    if -5.5 <= lon <= 2.8 and 43.0 <= lat <= 48.9:
-        return "Atlantic Europe"
-    if -4.8 <= lon <= 3.1 and 46.8 <= lat <= 48.95:
-        return "Atlantic Europe"
     # Atlantic: Cantabrian/Biscay north Spain and west France, but not Catalonia/Ebro.
     if -10.5 <= lon <= -1.2 and 42.25 <= lat <= 50.9:
         return "Atlantic Europe"
