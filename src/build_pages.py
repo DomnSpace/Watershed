@@ -87,8 +87,11 @@ def override_region_for_basin(lon, lat, current):
         return "Baltic / East Sea Europe"
 
     # Britain and Ireland split.
-    # West-facing Severn/Wye/Dee/Mersey/Cumbria outlets go to the Irish Sea before North Sea rules.
-    if -4.7 <= lon <= -2.0 and 51.0 <= lat <= 53.05:
+    # Southwest England / Bristol Channel / outer Channel side is not Irish Sea.
+    if -6.6 <= lon <= -2.6 and 49.7 <= lat < 51.65:
+        return "Atlantic Europe"
+    # True Irish Sea-facing Wales, Dee/Mersey, Cumbria and Clyde/Solway belts.
+    if -5.4 <= lon <= -3.0 and 51.65 <= lat <= 53.05:
         return "Irish Sea Europe"
     if -3.55 <= lon <= -2.0 and 53.0 <= lat <= 55.25:
         return "Irish Sea Europe"
@@ -96,7 +99,7 @@ def override_region_for_basin(lon, lat, current):
         return "North Sea Europe"
     if -4.0 <= lon <= 1.8 and 56.0 <= lat <= 59.4:
         return "North Sea Europe"
-    if -7.7 <= lon <= -2.8 and 50.0 <= lat <= 56.5:
+    if -7.7 <= lon <= -3.0 and 51.65 <= lat <= 56.5:
         return "Irish Sea Europe"
     if -8.1 <= lon <= -3.4 and 55.7 <= lat <= 59.0:
         return "Irish Sea Europe"
