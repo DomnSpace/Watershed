@@ -2,10 +2,21 @@ name: Build and publish watershed web map
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which data target to build'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - world
+          - europe
+          - both
   push:
-    branches: [main]
+    branches: [main, global-watershed]
     paths:
       - 'src/**'
+      - 'docs/**'
       - '.github/workflows/pages.yml'
       - 'requirements.txt'
 
@@ -21,7 +32,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -42,8 +53,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build website data and map
-        run: python src/build_pages.py
+      - name: Cache geospatial downloads
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: geodata-${{ runner.os }}-${{ hashFiles('src/**/*.py') }}
+          restore-keys: |
+            geodata-${{ runner.os }}-
+
+      - name: Decide build target
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "target=${{ inputs.target }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_name }}" = "global-watershed" ]; then
+            echo "target=both" >> "$GITHUB_OUTPUT"
+          else
+            echo "target=europe" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Europe tab data
+        if: steps.target.outputs.target == 'europe' || steps.target.outputs.target == 'both'
+        run: python src/build_europe_data.py
+
+      - name: Build World tab data
+        if: steps.target.outputs.target == 'world' || steps.target.outputs.target == 'both'
+        run: python src/global/build_global.py
+
+      - name: Build tabbed site shell
+        run: python src/build_site_index.py
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
