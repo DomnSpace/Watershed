@@ -1,14 +1,14 @@
-name: Atolia provenance manifest
+name: Atolia provenance and procedural career
 
 on:
   workflow_dispatch:
     inputs:
       manifest:
-        description: Artifact manifest path
+        description: Canonical/reference artifact manifest path
         required: false
         default: catalogues/archaeometallurgy_300_v0.txt
       seed:
-        description: Monte Carlo seed
+        description: Master procedural career seed
         required: false
         default: '1300'
   push:
@@ -43,13 +43,14 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Run provenance tests
+      - name: Run Atolia provenance and procedural sampler tests
         run: |
           pytest -q \
             tests/test_atolia_provenance.py \
             tests/test_atolia_provenance_mediterranean.py \
             tests/test_atolia_artifact_manifest.py \
-            tests/test_atolia_manifest_distribution.py
+            tests/test_atolia_manifest_distribution.py \
+            tests/test_atolia_procedural_sampler.py
 
       - name: Resolve build inputs
         id: inputs
@@ -63,34 +64,57 @@ jobs:
             echo "seed=1300" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build player-safe artifact dataset
+      - name: Build canonical manifest regression dataset
         run: |
           python src/atolia/build_manifest_dataset.py \
             --manifest "${{ steps.inputs.outputs.manifest }}" \
             --seed "${{ steps.inputs.outputs.seed }}" \
+            --workshops 1200 \
+            --catalogue-cap 15000 \
+            --out-dir out/canonical_manifest_regression
+
+      - name: Build unique procedural 300-object career
+        run: |
+          python src/atolia/procedural_sampler.py \
+            --seed "${{ steps.inputs.outputs.seed }}" \
             --workshops 1600 \
             --catalogue-cap 18000 \
-            --out-dir out/atolia_artifacts_v0
+            --out-dir out/procedural_career
 
-      - name: Assert player export contains no developer truth keys
+      - name: Assert procedural player export contains no developer truth keys
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          text = '\n'.join(p.read_text() for p in Path('out/atolia_artifacts_v0/player').glob('*') if p.is_file())
+          roots = [Path('out/canonical_manifest_regression/player'), Path('out/procedural_career/player')]
+          text = '\n'.join(
+              p.read_text()
+              for root in roots
+              for p in root.glob('*')
+              if p.is_file()
+          )
           forbidden = [
               'target_tonnes', 'bundle_id', 'bundle_family', 'source_mix',
               'workshop_id', 'lineage_id', 'guild_id', 'guild_strength',
+              'guild_events', 'guild_affinity_vector', 'guild_event_vector',
               'route', 'recycle_fraction', 'bronze_network_coupling',
+              'spoiler_score', 'network_information',
           ]
           leaked = [key for key in forbidden if f'"{key}"' in text]
           if leaked:
               raise SystemExit(f'Hidden truth leaked into player export: {leaked}')
           PY
 
-      - name: Upload generated provenance dataset
+      - name: Upload procedural player career
         uses: actions/upload-artifact@v4
         with:
-          name: atolia-artifacts-${{ steps.inputs.outputs.seed }}
-          path: out/atolia_artifacts_v0
+          name: dr-corrosion-archaeometallurgy-career-${{ steps.inputs.outputs.seed }}
+          path: out/procedural_career
+          retention-days: 14
+
+      - name: Upload canonical regression build
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-canonical-manifest-${{ steps.inputs.outputs.seed }}
+          path: out/canonical_manifest_regression
           retention-days: 14
