@@ -1,0 +1,300 @@
+1. Native-copper nugget
+2. Hammer-flattened copper bead
+3. Rolled copper tube bead
+4. Copper awl
+5. Copper fishhook
+6. Copper pin
+7. Hammered copper sheet fragment
+8. Simple copper finger ring
+9. Copper wire spiral
+10. Copper rivet
+11. Open-mould copper axe blank
+12. Flat copper axe
+13. Cast copper chisel
+14. Copper adze
+15. Copper knife blank
+16. Simple cast copper dagger
+17. Copper spearhead
+18. Cast copper rod
+19. Plano-convex copper casting cake
+20. Copper casting sprue with gate
+21. Arsenical-copper awl
+22. Arsenical-copper flat axe
+23. Arsenical-copper dagger
+24. Riveted arsenical-copper blade
+25. Arsenical-copper spearhead
+26. Arsenical-copper chisel
+27. Arsenical-copper dress pin
+28. Arsenical-copper bracelet
+29. Arsenical-copper ingot fragment
+30. Remelted arsenical-copper casting cake
+31. Low-tin bronze bead
+32. Low-tin bronze pin
+33. Tin-bronze ring
+34. Bronze razor
+35. Bronze utility knife
+36. Tin-bronze flat axe
+37. Bronze chisel
+38. Bronze sickle fragment
+39. Tin-bronze spearhead
+40. Small tin-bronze ingot
+41. Flanged bronze axe
+42. Bronze palstave
+43. Socketed bronze axe
+44. Socketed bronze spearhead
+45. Tanged bronze knife
+46. Riveted bronze dagger
+47. Leaf-shaped bronze spearhead
+48. Ribbed bronze sickle
+49. Bronze saw blade
+50. Socketed bronze chisel
+51. Leaded-bronze figurine
+52. Leaded-bronze vessel foot
+53. High-tin bronze mirror blank
+54. High-tin bronze bell
+55. Bell-bronze cymbal fragment
+56. Leaded-bronze balance weight
+57. Brass dress pin
+58. Brass fibula
+59. Gunmetal vessel fitting
+60. Red-brass decorative mount
+61. Cast lead spindle whorl
+62. Lead sling bullet
+63. Stamped lead seal
+64. Inscribed lead tablet
+65. Cast lead pipe fragment
+66. Tin ingot fragment
+67. Pewter spoon
+68. Pewter plate sherd
+69. Tin-lined copper vessel fragment
+70. Ancient soft-solder lump
+71. Raw iron bloom fragment
+72. Wrought-iron nail
+73. Forged iron clamp
+74. Bloomery-iron utility knife
+75. Iron sickle
+76. Forged iron axe
+77. Iron chisel
+78. Iron spearhead
+79. Forge-welded chain link
+80. Wrought-iron bar stock
+81. Carburized knife edge
+82. Steel-edged chisel
+83. Ferritic axe with steeled bit
+84. Hardened iron punch
+85. Quench-hardened blade fragment
+86. Case-carburized iron fitting
+87. Forge-welded steel-edged sickle
+88. Steel sword fragment
+89. Composite iron-and-steel axe
+90. Iron tool with inserted steel cutting edge
+91. Arsenical tin-bronze axe
+92. High-tin bell bronze fragment
+93. Speculum-type high-tin bronze mirror fragment
+94. Copper-tin-zinc gunmetal fitting
+95. High-zinc brass mount
+96. Leaded brass casting
+97. Silver-copper alloy ring
+98. Natural-electrum bead
+99. Silver-copper billon coin blank
+100. Tin-lead-copper pewter vessel fragment
+101. As-Sb-Ni-rich copper axe
+102. Ag-rich copper dagger
+103. Co-Ni-bearing arsenical-copper pin
+104. Pb-Bi-bearing copper ingot fragment
+105. Fe-rich copper casting
+106. Sb-rich copper awl
+107. Ni-bearing copper bracelet
+108. As-Ag-Sb copper sheet fragment
+109. Trace-element-rich copper rivet
+110. Chemically anomalous copper hoard fragment
+111. Malachite ore fragment
+112. Chalcopyrite ore fragment
+113. Roasted copper ore
+114. Copper matte fragment
+115. Copper smelting slag
+116. Copper-prill-bearing slag
+117. Smelting-crucible wall fragment
+118. Refining-hearth copper cake
+119. Metallic copper prill extracted from slag
+120. Copper smelting furnace accretion
+121. Plano-convex copper ingot
+122. Bun-shaped copper ingot
+123. Bar copper ingot
+124. Ring ingot / Ösenringbarren
+125. Rib ingot fragment
+126. Oxhide-ingot corner fragment
+127. Cast tin ingot
+128. Stamped lead ingot
+129. Oxidized copper ingot with preserved casting skin
+130. Mixed scrap-metal smelting charge
+131. Dendritic tin-bronze axe
+132. Strongly cored bronze spearhead
+133. Chill-cast bronze cutting edge
+134. Bronze handle with shrinkage cavity
+135. Lead-segregated bronze vessel foot
+136. As-cast brass fitting
+137. High-tin bronze mirror with δ-phase network
+138. Segregated bell-bronze fragment
+139. Hollow-cast bronze figurine
+140. Lost-wax runner attached to failed casting
+141. Cold-hammered copper blade
+142. Annealed copper sheet
+143. Work-hardened bronze sickle
+144. Hammered bronze bowl sherd
+145. Raised copper vessel wall
+146. Drawn bronze wire
+147. Twisted bronze wire torque segment
+148. Hammer-finished high-tin bronze mirror
+149. Annealed brass sheet mount
+150. Peened bronze rivet cross-section
+151. Slag-stringer-rich wrought-iron bar
+152. Ferrite-dominated iron nail
+153. Phosphoric-iron knife back
+154. Ferrite-pearlite axe body
+155. Carburized steel knife edge
+156. Decarburized sword surface
+157. Forge-weld seam in iron chisel
+158. Folded heterogeneous iron bar
+159. Bloom-compaction weld fragment
+160. Surface-carburized iron tool
+161. Normalized steel knife
+162. Martensitic quenched cutting edge
+163. Tempered-martensitic chisel
+164. Fine-pearlitic sword core
+165. Blade with preserved quench gradient
+166. Differentially hardened knife
+167. Slack-quenched axe edge
+168. Overheated coarse-grained spearhead
+169. Quench-cracked blade fragment
+170. Reheated and re-tempered repaired edge
+171. Stone-mould flat axe
+172. Bivalve-mould spearhead
+173. Clay-mould socketed axe
+174. Core-cast socketed spearhead
+175. Lost-wax bronze figurine
+176. Lost-wax cauldron handle
+177. Piece-mould bronze vessel fragment
+178. Chaplet-supported hollow casting
+179. Repair-cast bronze vessel foot
+180. Miscast runner-gate-object assembly
+181. Partially consolidated iron billet
+182. Drawn-out knife tang
+183. Upset iron hammer head
+184. Punched axe-eye blank
+185. Drifted axe-eye forging
+186. Forge-welded iron ring
+187. Scarf-welded chain link
+188. Fire-welded laminated blade
+189. Forged-and-ground sickle
+190. Peened riveted spear assembly
+191. Riveted sheet-bronze cauldron
+192. Lapped bronze bucket wall
+193. Raised copper bowl
+194. Planished bronze basin
+195. Soft-soldered bronze vessel handle
+196. Brazed brass fitting
+197. Tin-soldered vessel repair patch
+198. Silver-soldered decorative mount
+199. Fold-seamed copper tube
+200. Clinched sheet-metal rim
+201. Cast midrib bronze spearhead
+202. Socketed spearhead with displaced clay core
+203. Flange-hilted bronze sword
+204. Naue II-type bronze sword
+205. Antenna-hilted iron sword
+206. Pattern-welded sword fragment
+207. Piled-construction seax
+208. Iron axe with forge-welded steel bit
+209. Trilobate iron arrowhead
+210. Iron spearhead with selectively carburized tip
+211. One-piece bronze fibula
+212. Bronze fibula with separate iron pin
+213. Certosa-type fibula
+214. La Tène-type fibula
+215. Serpentine bronze fibula
+216. Twisted bronze torque
+217. Hollow gold neck ring
+218. Granulated gold pendant
+219. Filigree silver earring
+220. Cloisonné metal-cell mount
+221. Tinned bronze mirror
+222. Silver-plated copper coin
+223. Mercury-gilded bronze buckle
+224. Fire-gilded silver mount
+225. Gold-foil-clad bronze ornament
+226. Niello-inlaid silver plaque
+227. Copper-inlaid iron blade
+228. Silver-wire-inlaid iron fitting
+229. Enamel-inlaid bronze brooch
+230. Tin-enriched surface-treated bronze vessel
+231. Copper axe beneath cuprite and malachite layers
+232. Bronze pin enclosed in carbonate corrosion
+233. Bronze object with tin-enriched corrosion surface
+234. Dezincified archaeological brass fibula
+235. Chloride-active bronze coin
+236. Forged iron with preserved magnetite scale
+237. Phosphate-mineralized iron tool
+238. Iron buckle preserving mineralized textile
+239. Iron rivet preserving mineralized wood grain
+240. Gilded bronze object with gilding trapped beneath burial corrosion
+241. Recast bronze axe carrying a scrap-metal signature
+242. Highly leaded recycled socketed axe
+243. Figurine cast from remelted coin bronze
+244. Recycled brass-to-gunmetal vessel fitting
+245. Crucible containing chemically mixed copper-alloy charge
+246. Bronze sword repaired with compositionally later rivets
+247. Cauldron patched with a chemically distinct bronze sheet
+248. Re-forged iron knife made from heterogeneous scrap
+249. Composite iron bar joining low- and high-phosphorus iron
+250. Debased silver coin struck from recycled bullion
+251. Cypriot-type oxhide copper ingot
+252. Alpine fahlore-derived copper axe candidate
+253. Fahlore-signature bronze dagger
+254. Iberian-type copper ingot fragment
+255. Sardinian Bronze Age hoard axe
+256. British Late Bronze Age socketed axe with trace-element fingerprint
+257. Central European Ösenringbarren
+258. Mitterberg-type copper-smelting slag prill
+259. Laurion-type lead-silver litharge fragment
+260. Anatolian copper-alloy ingot fragment
+261. Lead-isotope-characterized bronze spearhead
+262. Lead-isotope-characterized silver ornament
+263. Tin-isotope-characterized bronze ingot
+264. Copper-isotope-characterized axe
+265. Slag-inclusion-matched bloomery iron bar
+266. Iron bloom preserving a diagnostic slag-inclusion population
+267. Silver ornament with diagnostic Au-Bi-Pb trace fingerprint
+268. Electrum pendant retaining natural Au-Ag-Cu source signature
+269. Lead object matching a regional isotope field
+270. Alluvial-gold bead preserving platinum-group mineral inclusions
+271. Cast bronze coin flan
+272. Struck silver drachm
+273. Debased silver denarius
+274. Copper-cored silver fourrée coin
+275. Natural-electrum stater
+276. Cast potin coin
+277. Billon coin
+278. High-purity gold solidus
+279. Mint-linked silver coin with characteristic Au-Pb-Bi trace profile
+280. Overstruck silver coin retaining the chemistry of an earlier flan
+281. Hammered gold-foil diadem
+282. Repoussé gold plaque
+283. Granulated gold earring
+284. Filigree gold pendant
+285. Hollow soldered gold bead
+286. Intact chased silver drinking vessel
+287. Gilded silver phiale
+288. Electrum vessel fragment with polished decorated surface
+289. Gem-set gold signet ring
+290. Garnet cloisonné gold mount
+291. Intact bronze helmet with surviving tinning and gilding traces
+292. Inlaid iron sword with preserved organic grip components
+293. Ceremonial bronze cuirass with chased, repoussé and repaired zones
+294. Gilded silver reliquary with multiple solder generations
+295. Polychrome cloisonné sword pommel with garnet, glass, gold and internal solder
+296. Hammered gold funerary mask with deformation and ancient repair zones
+297. Chased silver ceremonial vessel combining niello, gilding and soldered attachments
+298. Gem-set gold seal ring containing original solder, wear layers and a historical repair
+299. Composite ceremonial diadem with gold foil, silver structural elements, stones and preserved organic residues
+300. Unique museum-grade ceremonial vessel with gold and silver components, differential gilding, soldered joins, enamel/inlay, corrosion layers, historical restoration materials, uncertain provenance, and absolutely no destructive sampling permitted
