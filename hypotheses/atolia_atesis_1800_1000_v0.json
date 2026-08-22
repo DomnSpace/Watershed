@@ -1,0 +1,114 @@
+{
+  "scenario_id": "atolia-atesis-200kt-v0",
+  "title": "Atolia / Atesis copper corridor hypothesis v0",
+  "status": "deliberately strong falsifiable game-world hypothesis",
+  "claim": {
+    "material": "copper mass equivalent",
+    "measure": "gross mass crossing the Atesis trunk checkpoint once per downstream passage",
+    "checkpoint_id": "verona_plain_gate",
+    "start_bc": 1800,
+    "end_bc": 1000,
+    "target_tonnes": 200000,
+    "mean_tonnes_per_year": 250.0,
+    "interpretation": "Corridor throughput, not an estimate of copper mined inside the Adige basin. Source composition is latent and must be reconstructed."
+  },
+  "time_prior": [
+    {
+      "start_bc": 1800,
+      "end_bc": 1600,
+      "share": 0.05,
+      "tonnes": 10000,
+      "mean_tonnes_per_year": 50.0,
+      "label": "early corridor"
+    },
+    {
+      "start_bc": 1600,
+      "end_bc": 1400,
+      "share": 0.20,
+      "tonnes": 40000,
+      "mean_tonnes_per_year": 200.0,
+      "label": "expansion"
+    },
+    {
+      "start_bc": 1400,
+      "end_bc": 1200,
+      "share": 0.40,
+      "tonnes": 80000,
+      "mean_tonnes_per_year": 400.0,
+      "label": "high-throughput Late Bronze Age"
+    },
+    {
+      "start_bc": 1200,
+      "end_bc": 1000,
+      "share": 0.35,
+      "tonnes": 70000,
+      "mean_tonnes_per_year": 350.0,
+      "label": "redistribution / terminal Bronze Age"
+    }
+  ],
+  "time_prior_note": "The 200,000 t total is fixed by the scenario. The phase split is a v0 prior chosen to place most throughput after the sixteenth century BC and must remain editable rather than being presented as an archaeological measurement.",
+  "geometry_note": "The first overlay uses the modern Adige/Athesis hydrological trunk as a carrier skeleton. It is not a reconstruction of every Bronze Age palaeochannel, delta branch, landing place or navigability limit.",
+  "corridor_waypoints": [
+    {"id": "upper_atesis", "label": "Upper Atesis", "lat": 46.80, "lon": 10.53},
+    {"id": "merano_gate", "label": "Merano valley gate", "lat": 46.67, "lon": 11.16},
+    {"id": "bolzano_confluence", "label": "Bolzano confluence", "lat": 46.50, "lon": 11.35},
+    {"id": "trento_gate", "label": "Trento valley gate", "lat": 46.07, "lon": 11.12},
+    {"id": "rovereto_gate", "label": "Rovereto valley gate", "lat": 45.89, "lon": 11.04},
+    {"id": "verona_plain_gate", "label": "Verona plain gate", "lat": 45.44, "lon": 10.99},
+    {"id": "legnago_lower_atesis", "label": "Lower Atesis", "lat": 45.19, "lon": 11.31},
+    {"id": "adriatic_outlet", "label": "Adriatic outlet proxy", "lat": 45.14, "lon": 12.32}
+  ],
+  "evidence_anchors": [
+    {
+      "id": "mitterberg_scale",
+      "label": "Mitterberg scale comparator",
+      "role": "external production-scale comparator; not assumed to feed the Atesis",
+      "lat": 47.39,
+      "lon": 13.13,
+      "known_order_tonnes": 20000,
+      "start_bc": 1600,
+      "end_bc": 1200,
+      "source": "Pernicka, Lutz & Stoellner, Bronze Age Copper Produced at Mitterberg and its Distribution"
+    },
+    {
+      "id": "trentino_field",
+      "label": "Eastern Trentino smelting field",
+      "role": "real production-field prior; exact contribution to Atesis flow remains latent",
+      "lat": 46.12,
+      "lon": 11.35,
+      "mapped_smelting_sites_order": 198,
+      "start_bc": 1600,
+      "end_bc": 900,
+      "source": "Bellintani et al., Prehistoric copper production in Trentino"
+    },
+    {
+      "id": "acqua_fredda",
+      "label": "Acqua Fredda / Redebus Pass",
+      "role": "southern-Alpine production-scale anchor",
+      "lat": 46.15,
+      "lon": 11.32,
+      "estimated_copper_tonnes_min": 150,
+      "estimated_copper_tonnes_max": 200,
+      "start_bc": 1300,
+      "end_bc": 1100,
+      "source": "Deutsches Bergbau-Museum, Praehistorische Kupferproduktion in Trentino Orientale"
+    },
+    {
+      "id": "frattesina",
+      "label": "Frattesina redistribution node",
+      "role": "late trans-shipment / manufacturing comparator near the Po-Adriatic system",
+      "lat": 45.02,
+      "lon": 11.42,
+      "start_bc": 1200,
+      "end_bc": 900,
+      "source": "Pearce, Bellintani & Nicolis, Frattesina and the later Bronze Age–Early Iron Age metals trade"
+    }
+  ],
+  "tests": [
+    "Can known and plausible source fields supply the required trunk flow without impossible mine output?",
+    "Does the implied slag, charcoal, timber and labour footprint fit the archaeological landscape?",
+    "Do trace-element and isotope mixtures downstream require multiple source fields or heavy recycling?",
+    "Do workshop lineages and object distributions follow the river corridor more strongly than alternative least-cost routes?",
+    "Can the high-throughput scenario be distinguished from a 20,000–60,000 t null world after preservation and excavation bias?"
+  ]
+}
