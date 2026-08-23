@@ -12,7 +12,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import curriculum_contract_v1 as contract_v1
-import poari_career_router as poari
+import poari_career_router_strict as poari
 import procedural_sampler as procedural
 import provenance_field_mediterranean as med
 
@@ -51,7 +51,7 @@ def build_player_package(
     world.rng = __import__("numpy").random.default_rng(seeds.archaeology_seed)
     generation = world.generate_archaeological_catalogue(max_materialized=catalogue_cap)
 
-    sampler = poari.POARICareerSampler(world, seeds)
+    sampler = poari.StrictPOARICareerSampler(world, seeds)
     sampler.prepare_candidates()
     objects = sampler.sample()
     analyses = sampler.player_analyses()
