@@ -2,12 +2,14 @@
   "schema": "dr-corrosion.archaeometallurgy.generator-contract.v1",
   "generator_version": "archaeometallurgy-poari-v1",
   "entrypoint": "generate_player_game.py",
+  "http_entrypoint": "serve_player_game.py",
   "python": ">=3.11",
-  "requirements": "requirements.txt",
+  "requirements": "requirements-atolia.txt",
   "player_request": {
     "required": ["player_key"],
     "optional": ["output_path"]
   },
+  "http_request": "GET /game?player_key=<opaque-key>",
   "player_response": {
     "schema": "dr-corrosion.archaeometallurgy.player-package.v1",
     "objects": 300,
@@ -15,6 +17,16 @@
     "objects_per_level": 10
   },
   "determinism": "same player_key and generator_version produce the same player package",
-  "deployment_note": "Run server-side or from a trusted offline checkout. Return only the player package; never serve debug output or hidden hypothesis configuration to the game client.",
+  "routing": {
+    "model": "p-Measure Ordered Action-Routing Intelligence",
+    "p_schedule": {
+      "levels_1_8": -1,
+      "levels_9_18": 0,
+      "levels_19_25": 1,
+      "levels_26_30": 2
+    },
+    "post_selection": "coherence-constrained involutive slot rewrite"
+  },
+  "deployment_note": "Run server-side or from a trusted offline checkout. Cache immutable player packages by generator version and package id. Return only the player package; never serve debug output or hidden hypothesis configuration to the game client.",
   "repository_role": "generator source and reproducibility anchor; not the final game frontend"
 }
