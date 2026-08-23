@@ -1,0 +1,20 @@
+{
+  "schema": "dr-corrosion.archaeometallurgy.generator-contract.v1",
+  "generator_version": "archaeometallurgy-poari-v1",
+  "entrypoint": "generate_player_game.py",
+  "python": ">=3.11",
+  "requirements": "requirements.txt",
+  "player_request": {
+    "required": ["player_key"],
+    "optional": ["output_path"]
+  },
+  "player_response": {
+    "schema": "dr-corrosion.archaeometallurgy.player-package.v1",
+    "objects": 300,
+    "levels": 30,
+    "objects_per_level": 10
+  },
+  "determinism": "same player_key and generator_version produce the same player package",
+  "deployment_note": "Run server-side or from a trusted offline checkout. Return only the player package; never serve debug output or hidden hypothesis configuration to the game client.",
+  "repository_role": "generator source and reproducibility anchor; not the final game frontend"
+}
