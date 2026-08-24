@@ -17,20 +17,20 @@ import rare_event_materializer as materializer
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Run aggregate hidden economy -> rare archaeological biography diagnostics")
+    ap = argparse.ArgumentParser(description="Run aggregate hidden economy -> rich rare archaeological biography diagnostics")
     ap.add_argument("--hypothesis", type=Path, default=Path("hypotheses/atolia_atesis_1800_1000_v0.json"))
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=28)
     ap.add_argument("--candidates", type=int, default=100000)
+    ap.add_argument("--workshops", type=int, default=3200)
     ap.add_argument("--out", type=Path, default=Path("output/intensity_world_summary.json"))
     ap.add_argument("--candidate-out", type=Path, default=None,
-                    help="Optional developer-only JSONL dump of latent materialized biographies")
+                    help="Optional developer-only JSONL dump including physical artifact truth")
     args = ap.parse_args()
 
     hypothesis = json.loads(args.hypothesis.read_text(encoding="utf-8"))
-    world = afw.ArchaeologicalFieldWorld(hypothesis, seed=args.seed)
-    world._build_graph()
-    world._build_bundles()
+    world = afw.FieldArchaeologicalObservationWorld(hypothesis, seed=args.seed)
+    world.build(workshop_count=args.workshops)
     reports, flow = intensity.propagate_world(world, max_steps=args.steps)
     candidates, mat = materializer.materialize_biographies(world, reports, args.candidates, args.seed)
 
@@ -42,14 +42,15 @@ def main() -> None:
         by_mode[row["deposition_truth"]["mode"]] += w
 
     summary = {
-        "flow": flow,
-        "materialization": mat,
+        "flow": flow, "materialization": mat,
+        "physical_world": {"sources": len(world.sources), "workshops": len(world.workshops),
+                           "guilds": len(getattr(world, "guilds", {}))},
         "weighted_candidate_distribution": {
             "object_class": dict(sorted(by_class.items())),
             "deposition_region": dict(sorted(by_region.items())),
             "deposition_mode": dict(sorted(by_mode.items())),
         },
-        "carrier": getattr(world, "dense_geography_report", None),
+        "carrier": getattr(world, "geography_report", None),
         "warning": "Developer truth diagnostic; never include this file in player package.",
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
