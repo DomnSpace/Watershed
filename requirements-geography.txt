@@ -1,0 +1,7 @@
+# Developer-only dependencies for src/atolia/build_physical_carrier.py
+# Player generation continues to require only requirements-atolia.txt.
+numpy>=1.26,<3
+pandas>=2.1,<3
+shapely>=2.0,<3
+geopandas>=0.14,<2
+pyogrio>=0.7,<1
