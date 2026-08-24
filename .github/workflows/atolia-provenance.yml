@@ -26,6 +26,7 @@ on:
       - 'atolia_game_generator.json'
       - 'requirements-atolia.txt'
       - 'tests/test_atolia_*.py'
+      - 'tests/test_archaeology_observation_v2.py'
       - '.github/workflows/atolia-provenance.yml'
 
 permissions:
@@ -59,7 +60,8 @@ jobs:
             tests/test_atolia_artifact_manifest.py \
             tests/test_atolia_manifest_distribution.py \
             tests/test_atolia_procedural_sampler.py \
-            tests/test_atolia_poari_router.py
+            tests/test_atolia_poari_router.py \
+            tests/test_archaeology_observation_v2.py
 
       - name: Resolve build inputs
         id: inputs
@@ -107,6 +109,9 @@ jobs:
               'guild_events', 'guild_affinity_vector', 'guild_event_vector',
               'route', 'recycle_fraction', 'bronze_network_coupling',
               'spoiler_score', 'network_information', 'route_trace',
+              'ordinary_return_probability', 'exceptional_loss_probability',
+              'archaeological_survival_probability', 'modern_discovery_probability',
+              'corridor_crossings', 'exceptionality',
           ]
           leaked = [key for key in forbidden if f'"{key}"' in text]
           if leaked:
