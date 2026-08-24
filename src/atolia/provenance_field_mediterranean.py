@@ -50,7 +50,7 @@ EXTENDED_NODES = [
     ("cyprus", "Cyprus copper / exchange field", 33.00, 35.10, "source", 0.72),
     ("levant_north", "Northern Levantine coast", 35.65, 35.35, "coast", 0.45),
     ("nile_delta", "Lower Nile / eastern Mediterranean gate", 31.10, 31.25, "river", 0.36),
-    ("hatti_west", "Hatti / central Anatolian interface", 32.10, 39.05, "hub", 0.58),
+    ("hatti_west", "Arzawa / western Anatolian interface", 32.10, 39.05, "hub", 0.58),
     ("sava_danube_gate", "Sava–Danube transfer gate", 20.45, 44.80, "river", 0.58),
     ("lower_danube", "Lower Danube corridor", 27.80, 44.20, "river", 0.62),
 ]
@@ -78,25 +78,22 @@ EXTENDED_EDGES = [
     ("aegean_north", "cyclades", "sea", 0.23),
     ("cyclades", "crete", "sea", 0.21),
     ("crete", "cyprus", "sea", 0.23),
-    ("cyprus", "levant_north", "sea", 0.20),
-    ("levant_north", "nile_delta", "sea", 0.23),
-    ("cyprus", "hatti_west", "anatolian_transfer", 0.72),
-    ("aegean_north", "hatti_west", "anatolian_transfer", 0.82),
-    ("friuli_hub", "sava_danube_gate", "balkan_transfer", 0.78),
-    ("sava_danube_gate", "lower_danube", "river", 0.42),
-    ("lower_danube", "aegean_north", "thracian_transfer", 0.74),
-    ("upper_atesis", "upper_rhine", "alpine_pass", 1.08),
+    ("cyprus", "levant_north", "sea", 0.22),
+    ("levant_north", "nile_delta", "sea", 0.25),
+    ("hatti_west", "aegean_north", "land_sea", 0.55),
+    ("hatti_west", "cyprus", "land_sea", 0.62),
+    ("friuli_hub", "sava_danube_gate", "land_river", 0.82),
+    ("sava_danube_gate", "lower_danube", "river_down", 0.38),
+    ("lower_danube", "aegean_north", "balkan_transfer", 0.82),
 ]
 
-# Deliberately overlapping simulation priors, not claims that these exact
-# trace/isotope centroids are measured archaeological source signatures.
 EXTENDED_SOURCE_SPECS = [
-    ("cyprus_troodos", "Cypriot / Troodos copper family", 33.05, 35.05, 2200, 900, 0.55,
-     [300, 105, 720, 80, 50], [18.71, 15.70, 38.73]),
-    ("anatolia_aegean", "Aegean–Anatolian copper family", 29.50, 38.50, 2400, 900, 0.38,
-     [520, 155, 510, 92, 64], [18.54, 15.68, 38.61]),
-    ("lower_danube_balkan", "Lower Danube / Balkan copper family", 25.20, 44.20, 2600, 900, 0.42,
-     [410, 175, 930, 120, 52], [18.39, 15.71, 38.70]),
+    ("cyprus_troodos", "Cypriot / Troodos copper family", 32.90, 34.95, 2600, 900, 0.44,
+     [255, 72, 435, 48, 21], [18.78, 15.69, 38.86]),
+    ("anatolia_aegean", "Western Anatolian / Aegean copper family", 27.80, 38.30, 2600, 900, 0.30,
+     [510, 135, 590, 71, 64], [18.52, 15.67, 38.61]),
+    ("lower_danube_balkan", "Lower Danube / Balkan copper family", 25.10, 44.10, 3000, 900, 0.34,
+     [460, 118, 760, 92, 48], [18.41, 15.66, 38.52]),
     ("sardinia_westmed", "Sardinian / west Mediterranean copper family", 9.00, 40.10, 2200, 900, 0.26,
      [665, 205, 315, 62, 91], [18.12, 15.64, 38.20]),
     ("iberia_westmed", "Iberian Mediterranean copper family", -0.20, 39.90, 2600, 900, 0.24,
@@ -138,7 +135,7 @@ REGION_BY_NODE: Dict[str, str] = {
     "sardinia": "western_mediterranean", "sicily": "central_mediterranean",
     "north_africa_central": "central_mediterranean", "ionian_gate": "central_mediterranean",
     "aegean_north": "aegean", "cyclades": "aegean", "crete": "crete",
-    "cyprus": "cyprus", "hatti_west": "hatti_anatolia",
+    "cyprus": "cyprus", "hatti_west": "western_anatolia",
     "sava_danube_gate": "lower_danube", "lower_danube": "lower_danube",
     "levant_north": "levant_egypt", "nile_delta": "levant_egypt",
 }
@@ -242,151 +239,175 @@ class MediterraneanProvenanceWorld(base.ProvenanceWorld):
         for bundle, weight in zip(bundles, raw):
             bundle.flux_tonnes[t] = float(total * weight)
 
+    def _class_weights(self, date_bc: int, bundle: base.JetBundle) -> Tuple[List[str], np.ndarray]:
+        classes, arr = super()._class_weights(date_bc, bundle)
+        if self.bundle_incidence.get(bundle.id, 1.0) >= 0.5:
+            return classes, arr
+        weights = np.array(arr, dtype=float)
+        for i, object_class in enumerate(classes):
+            if object_class in {"sword", "vessel", "ingot", "dagger", "ornament", "spearhead"}:
+                weights[i] *= 1.35
+            if object_class in {"scrap", "fitting"}:
+                weights[i] *= 0.72
+        weights /= weights.sum()
+        return classes, weights
+
     def _build_workshops(self, count: int) -> None:
         super()._build_workshops(count)
-        self._build_guilds()
+        self._build_guild_system()
 
-    def _shortest_distance(self, start: str, goal: str) -> float:
+    def _build_guild_system(self) -> None:
+        core = [w for w in self.workshops if w.node_id in ATOLIA_CORE_NODES]
+        if not core:
+            return
+        prototypes = [core[int(i)].technical_vector.copy() for i in self.rng.choice(len(core), size=12, replace=len(core) < 12)]
+        anchors = ["trento_gate", "rovereto_gate", "verona_plain_gate", "frattesina"]
+        for i in range(12):
+            self.guilds[f"G-{i + 1:02d}"] = {
+                "epithet": GUILD_EPITHETS[i],
+                "prototype": prototypes[i],
+                "anchor_node": anchors[i % len(anchors)],
+                "mobility_scale": float(self.rng.uniform(280, 760)),
+                "core_seed_workshops": [],
+            }
+
+        for workshop in self.workshops:
+            dists = []
+            for guild_id, guild in self.guilds.items():
+                technical_distance = float(np.linalg.norm(workshop.technical_vector - guild["prototype"]))
+                route_distance = self._network_distance(workshop.node_id, guild["anchor_node"])
+                mobility = float(guild["mobility_scale"])
+                score = math.exp(-technical_distance / 0.22) * math.exp(-route_distance / mobility)
+                dists.append((guild_id, score))
+            guild_id, score = max(dists, key=lambda item: item[1])
+            if workshop.node_id in ATOLIA_CORE_NODES:
+                threshold = 0.12
+            else:
+                threshold = 0.035
+            if score >= threshold:
+                self.workshop_guild[workshop.id] = guild_id
+                self.guild_strength[workshop.id] = float(np.clip(score, 0.0, 1.0))
+                if workshop.node_id in ATOLIA_CORE_NODES:
+                    self.guilds[guild_id]["core_seed_workshops"].append(workshop.id)
+            else:
+                self.workshop_guild[workshop.id] = None
+                self.guild_strength[workshop.id] = 0.0
+
+    def _network_distance(self, start: str, goal: str) -> float:
         key = (start, goal)
         if key in self._distance_cache:
             return self._distance_cache[key]
-        queue: List[Tuple[float, str]] = [(0.0, start)]
-        best = {start: 0.0}
-        while queue:
-            d, node = heapq.heappop(queue)
-            if node == goal:
+        dist = {start: 0.0}
+        heap = [(0.0, start)]
+        while heap:
+            d, cur = heapq.heappop(heap)
+            if cur == goal:
                 self._distance_cache[key] = d
                 self._distance_cache[(goal, start)] = d
                 return d
-            if d != best.get(node):
+            if d > dist.get(cur, float("inf")):
                 continue
-            for nxt, cost in self._neighbors(node):
-                nd = d + cost
-                if nd < best.get(nxt, float("inf")):
-                    best[nxt] = nd
-                    heapq.heappush(queue, (nd, nxt))
-        return float("inf")
+            for edge in self.edges:
+                nxt = None
+                if edge.a == cur:
+                    nxt = edge.b
+                elif not edge.directed and edge.b == cur:
+                    nxt = edge.a
+                if nxt is None:
+                    continue
+                nd = d + edge.cost
+                if nd < dist.get(nxt, float("inf")):
+                    dist[nxt] = nd
+                    heapq.heappush(heap, (nd, nxt))
+        return 9999.0
 
-    def _distance_to_core(self, node_id: str) -> float:
-        return min(self._shortest_distance(node_id, core) for core in ATOLIA_CORE_NODES)
-
-    @staticmethod
-    def _cosine(a: np.ndarray, b: np.ndarray) -> float:
-        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
-        return 0.0 if denom <= 0 else float(np.dot(a, b) / denom)
-
-    def _build_guilds(self) -> None:
-        core_workshops = [w for w in self.workshops if w.node_id in ATOLIA_CORE_NODES]
-        if len(core_workshops) < 36:
-            core_workshops = list(self.workshops)
-        shuffled = list(core_workshops)
-        self.rng.shuffle(shuffled)
-
-        for i, epithet in enumerate(GUILD_EPITHETS):
-            start = (i * 3) % len(shuffled)
-            seeds = shuffled[start:start + 3]
-            if len(seeds) < 3:
-                seeds = list(self.rng.choice(core_workshops, size=3, replace=False))
-            prototype = np.mean([w.technical_vector for w in seeds], axis=0)
-            prototype = np.clip(prototype + self.rng.normal(0, 0.018, size=6), 1e-5, None)
-            prototype /= prototype.sum()
-            anchor = str(self.rng.choice(sorted(ATOLIA_CORE_NODES)))
-            guild_id = f"G-{i + 1:02d}"
-            self.guilds[guild_id] = {
-                "epithet": epithet,
-                "anchor_node": anchor,
-                "prototype": prototype,
-                "mobility_scale": float(self.rng.uniform(190.0, 520.0)),
-                "core_seed_workshops": [w.id for w in seeds],
-            }
-            for workshop in seeds:
-                self.workshop_guild[workshop.id] = guild_id
-                self.guild_strength[workshop.id] = 1.0
-
-        extended_route_nodes = {
-            node_id for bundle in self.bundles if self.bundle_incidence.get(bundle.id, 1.0) < 0.5 for node_id in bundle.route
-        }
-        for workshop in self.workshops:
-            if workshop.id in self.workshop_guild:
-                continue
-            region = REGION_BY_NODE.get(workshop.node_id, "other")
-            d_core = self._distance_to_core(workshop.node_id)
-            p_any = 0.08 + 0.58 * math.exp(-d_core / 250.0)
-            if region != "atolia_core":
-                p_any *= 0.52
-            if workshop.node_id in extended_route_nodes:
-                p_any += 0.045
-            p_any = float(np.clip(p_any, 0.055, 0.76))
-            if self.rng.random() > p_any:
-                self.workshop_guild[workshop.id] = None
-                self.guild_strength[workshop.id] = 0.0
-                continue
-
-            ids = list(self.guilds)
-            scores = []
-            for guild_id in ids:
-                guild = self.guilds[guild_id]
-                sim = self._cosine(workshop.technical_vector, guild["prototype"])
-                d_anchor = self._shortest_distance(workshop.node_id, guild["anchor_node"])
-                spatial = math.exp(-d_anchor / guild["mobility_scale"])
-                scores.append(3.0 * sim + 0.9 * spatial + self.rng.normal(0, 0.12))
-            scores_arr = np.asarray(scores, dtype=float)
-            scores_arr -= scores_arr.max()
-            probs = np.exp(scores_arr / 0.45)
-            probs /= probs.sum()
-            guild_id = str(self.rng.choice(ids, p=probs))
-            strength = float(np.clip((max(scores) - 1.4) / 2.2, 0.10, 0.95))
-            self.workshop_guild[workshop.id] = guild_id
-            self.guild_strength[workshop.id] = strength
-
-    def _class_weights(self, date_bc: int, bundle: base.JetBundle):
-        classes, weights = super()._class_weights(date_bc, bundle)
-        if self.bundle_incidence.get(bundle.id, 1.0) >= 0.5:
-            return classes, weights
-        arr = np.array(weights, dtype=float)
-        for i, object_class in enumerate(classes):
-            if object_class in {"ornament", "dagger", "sword", "vessel", "ingot", "spearhead"}:
-                arr[i] *= 1.35
-            if object_class in {"scrap", "fitting"}:
-                arr[i] *= 0.72
-        arr /= arr.sum()
-        return classes, arr
-
-    def _materialize_object(self, object_no: int, object_class: str, bundle: base.JetBundle, date_bc: int, workshop: base.Workshop, dep_node: base.Node) -> Dict[str, Any]:
+    def _materialize_object(
+        self,
+        object_no: int,
+        object_class: str,
+        bundle: base.JetBundle,
+        date_bc: int,
+        workshop: base.Workshop,
+        dep_node: base.Node,
+    ) -> Dict[str, Any]:
         row = super()._materialize_object(object_no, object_class, bundle, date_bc, workshop, dep_node)
         guild_id = self.workshop_guild.get(workshop.id)
-        row["truth"]["guild_id"] = guild_id
-        row["truth"]["guild_strength"] = round(self.guild_strength.get(workshop.id, 0.0), 4)
-        row["truth"]["macro_region"] = REGION_BY_NODE.get(dep_node.id, "other")
-        row["truth"]["long_distance_tail"] = self.bundle_incidence.get(bundle.id, 1.0) < 0.5
+        strength = float(self.guild_strength.get(workshop.id, 0.0))
+        if guild_id and strength > 0:
+            guild = self.guilds[guild_id]
+            pull = 0.16 + 0.32 * strength
+            technical = np.asarray(row["truth"]["technical_vector"], dtype=float)
+            technical = (1.0 - pull) * technical + pull * guild["prototype"]
+            technical = np.clip(technical, 1e-6, None)
+            technical /= technical.sum()
+            row["truth"]["technical_vector"] = [round(float(x), 5) for x in technical]
+            row["tests"]["metallography"] = self._metallography_from_vector(technical)
+            row["tests"]["morphometrics"] = self._morphometrics_from_vector(technical)
+        row["truth"].update({
+            "macro_region": REGION_BY_NODE.get(dep_node.id, "other"),
+            "guild_id": guild_id,
+            "guild_strength": round(strength, 4),
+            "long_distance_tail": self.bundle_incidence.get(bundle.id, 1.0) < 0.5,
+        })
         return row
 
-    def select_curriculum(self, n: int = 300, levels: int = 30) -> List[Dict[str, Any]]:
-        selected = super().select_curriculum(n=n, levels=levels)
-        if n != 300 or levels != 30:
+    def _metallography_from_vector(self, vector: np.ndarray) -> Dict[str, Any]:
+        cast_strength = float(vector[0])
+        anneal = float(vector[2])
+        cold = float(vector[3])
+        dendritic = np.clip(0.75 * cast_strength + self.rng.normal(0.18, 0.09) - 0.45 * anneal, 0, 1)
+        recrystallized = np.clip(0.60 * anneal + 0.28 * cold + self.rng.normal(0.08, 0.07), 0, 1)
+        grain = float(np.clip(self.rng.normal(5.5 - 2.0 * anneal + 1.0 * cold, 0.72), 1, 9))
+        return {
+            "dendritic_fraction_index": round(float(dendritic), 3),
+            "recrystallized_fraction_index": round(float(recrystallized), 3),
+            "grain_size_index": round(grain, 2),
+            "working_state": (
+                "cast-dominant" if dendritic > 0.58 else
+                "annealed / recrystallized" if recrystallized > 0.52 else
+                "mixed worked structure"
+            ),
+        }
+
+    def _morphometrics_from_vector(self, vector: np.ndarray) -> Dict[str, float]:
+        return {
+            "slenderness_index": round(float(np.clip(0.34 + 1.05 * vector[5] + self.rng.normal(0, 0.035), 0.12, 1.35)), 3),
+            "edge_angle_index": round(float(np.clip(0.28 + 0.95 * vector[3] + self.rng.normal(0, 0.035), 0.10, 1.20)), 3),
+            "symmetry_index": round(float(np.clip(0.45 + 0.82 * vector[4] + self.rng.normal(0, 0.03), 0.20, 1.20)), 3),
+        }
+
+    def select_curriculum(self, sample_n: int = 300, levels: int = 30) -> List[Dict[str, Any]]:
+        selected = super().select_curriculum(sample_n, levels)
+        return self._enforce_extended_constraints(selected)
+
+    def _enforce_extended_constraints(self, selected: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not selected:
             return selected
         selected_ids = {row["object_id"] for row in selected}
-        peripheral_pool = [
+        current_peripheral = sum(row["truth"].get("macro_region") != "atolia_core" for row in selected)
+        target_min = max(9, int(round(len(selected) * 0.05)))
+        target_max = max(target_min, int(round(len(selected) * 0.18)))
+
+        def replacement_index(candidate: Mapping[str, Any], require_core: bool = True) -> int | None:
+            pool = [
+                i for i, row in enumerate(selected)
+                if (not require_core or row["truth"].get("macro_region") == "atolia_core")
+                and row["curriculum_level"] >= 8
+                and row["class"] == candidate["class"]
+            ]
+            if not pool:
+                pool = [i for i, row in enumerate(selected) if row["curriculum_level"] >= 8]
+            if not pool:
+                return None
+            return max(pool, key=lambda i: abs(float(selected[i]["truth"]["complexity"]) - 0.58))
+
+        peripheral_candidates = [
             row for row in self.catalogue_truth
             if row["object_id"] not in selected_ids and row["truth"].get("macro_region") != "atolia_core"
         ]
-        target_peripheral = min(22, max(16, int(round(n * 0.065))))
-        current_peripheral = sum(row["truth"].get("macro_region") != "atolia_core" for row in selected)
-
-        def replacement_index(candidate: Mapping[str, Any], require_core: bool = True) -> int | None:
-            eligible = []
-            for i, row in enumerate(selected):
-                if row["curriculum_level"] <= 4 or row["curriculum_level"] == 30:
-                    continue
-                if require_core and row["truth"].get("macro_region") != "atolia_core":
-                    continue
-                delta = abs(float(row["truth"]["complexity"]) - float(candidate["truth"]["complexity"]))
-                eligible.append((delta, i))
-            return min(eligible)[1] if eligible else None
-
-        self.rng.shuffle(peripheral_pool)
-        while current_peripheral < target_peripheral and peripheral_pool:
-            candidate = peripheral_pool.pop()
+        peripheral_candidates.sort(key=lambda row: abs(float(row["truth"]["complexity"]) - 0.58))
+        while current_peripheral < target_min and peripheral_candidates:
+            candidate = peripheral_candidates.pop(0)
             idx = replacement_index(candidate, require_core=True)
             if idx is None:
                 break
@@ -395,8 +416,8 @@ class MediterraneanProvenanceWorld(base.ProvenanceWorld):
             out = dict(candidate)
             out["curriculum_level"] = level
             out["curriculum_index"] = index
-            selected[idx] = out
             selected_ids.add(out["object_id"])
+            selected[idx] = out
             current_peripheral += 1
 
         represented = {row["truth"].get("guild_id") for row in selected if row["truth"].get("guild_id")}
