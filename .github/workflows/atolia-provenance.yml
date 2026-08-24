@@ -52,7 +52,7 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Run Atolia provenance, procedural and POARI tests
+      - name: Run Atolia provenance, procedural, geography and POARI tests
         run: |
           pytest -q \
             tests/test_atolia_provenance.py \
@@ -61,7 +61,8 @@ jobs:
             tests/test_atolia_manifest_distribution.py \
             tests/test_atolia_procedural_sampler.py \
             tests/test_atolia_poari_router.py \
-            tests/test_archaeology_observation_v2.py
+            tests/test_archaeology_observation_v2.py \
+            tests/test_atolia_dense_geography.py
 
       - name: Resolve build inputs
         id: inputs
