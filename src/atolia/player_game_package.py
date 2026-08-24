@@ -13,11 +13,11 @@ if str(HERE) not in sys.path:
 
 import curriculum_contract_v1 as contract_v1
 import archaeology_temporal_world as archaeology
-import poari_archaeology_v2 as poari
+import physical_poari_sampler as physical_sampler
 import procedural_sampler as procedural
 
-PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v3"
-GENERATOR_VERSION = "archaeometallurgy-poari-v3-round1-temporal-directional"
+PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v4"
+GENERATOR_VERSION = "archaeometallurgy-poari-v4-physical-artifact-truth"
 DEFAULT_HYPOTHESIS = Path("hypotheses/atolia_atesis_1800_1000_v0.json")
 
 
@@ -45,7 +45,7 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
     world.rng = __import__("numpy").random.default_rng(seeds.archaeology_seed)
     generation = world.generate_archaeological_catalogue(max_materialized=catalogue_cap)
 
-    sampler = poari.ArchaeologyPOARICareerSampler(world, seeds)
+    sampler = physical_sampler.PhysicalArchaeologyPOARICareerSampler(world, seeds)
     sampler.prepare_candidates(); objects = sampler.sample(); analyses = sampler.player_analyses(); report = sampler.career_report()
     selected_rows = [sampler.selected_by_slot[slot.index].row for slot in sampler.slots]
     selected_summary = world.catalogue_stage_summary(selected_rows)
@@ -61,6 +61,7 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
             "object_count": len(objects), "levels": 30, "objects_per_level": 10, "reproducible": True,
             "player_key_hash": hashlib.sha256(player_key.strip().encode("utf-8")).hexdigest()[:16],
             "world_seed_fingerprint": hashlib.sha256(str(seeds.world_seed).encode("utf-8")).hexdigest()[:12],
+            "physical_artifact_truth": True, "tool_specific_measurement_error": True,
         },
         "objects": objects, "analyses": analyses, "curriculum": contract_v1.as_jsonable(),
     }
