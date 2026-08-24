@@ -12,12 +12,12 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import curriculum_contract_v1 as contract_v1
-import poari_career_router_strict as poari
+import archaeology_observation_v2 as archaeology
+import poari_archaeology_v2 as poari
 import procedural_sampler as procedural
-import provenance_field_mediterranean as med
 
-PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v1"
-GENERATOR_VERSION = "archaeometallurgy-poari-v1"
+PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v2"
+GENERATOR_VERSION = "archaeometallurgy-poari-v2"
 DEFAULT_HYPOTHESIS = Path("hypotheses/atolia_atesis_1800_1000_v0.json")
 
 
@@ -46,12 +46,12 @@ def build_player_package(
     seeds = procedural.SeedBundle.from_master(master_seed)
     hypothesis = json.loads(hypothesis_path.read_text(encoding="utf-8"))
 
-    world = med.MediterraneanProvenanceWorld(hypothesis, seed=seeds.world_seed)
+    world = archaeology.ArchaeologicalObservationWorld(hypothesis, seed=seeds.world_seed)
     world.build(workshop_count=workshops)
     world.rng = __import__("numpy").random.default_rng(seeds.archaeology_seed)
     generation = world.generate_archaeological_catalogue(max_materialized=catalogue_cap)
 
-    sampler = poari.StrictPOARICareerSampler(world, seeds)
+    sampler = poari.ArchaeologyPOARICareerSampler(world, seeds)
     sampler.prepare_candidates()
     objects = sampler.sample()
     analyses = sampler.player_analyses()
@@ -86,6 +86,7 @@ def build_player_package(
                 "measurement": seeds.measurement_seed,
             },
             "generation": generation,
+            "archaeology_waterfall": world.archaeology_waterfall,
             "career_report": report,
             "truth": sampler.debug_truth(),
             "route_trace": sampler.debug_route_trace(),
