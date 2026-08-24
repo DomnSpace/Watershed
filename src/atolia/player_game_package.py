@@ -12,12 +12,12 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import curriculum_contract_v1 as contract_v1
-import archaeology_field_world as archaeology
+import archaeology_temporal_world as archaeology
 import poari_archaeology_v2 as poari
 import procedural_sampler as procedural
 
 PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v3"
-GENERATOR_VERSION = "archaeometallurgy-poari-v3-fieldcarrier1000"
+GENERATOR_VERSION = "archaeometallurgy-poari-v3-round1-temporal-directional"
 DEFAULT_HYPOTHESIS = Path("hypotheses/atolia_atesis_1800_1000_v0.json")
 
 
@@ -40,7 +40,7 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
     master_seed = seed_from_player_key(player_key)
     seeds = procedural.SeedBundle.from_master(master_seed)
     hypothesis = json.loads(hypothesis_path.read_text(encoding="utf-8"))
-    world = archaeology.FieldArchaeologicalObservationWorld(hypothesis, seed=seeds.world_seed)
+    world = archaeology.TemporalFieldArchaeologicalWorld(hypothesis, seed=seeds.world_seed)
     world.build(workshop_count=workshops)
     world.rng = __import__("numpy").random.default_rng(seeds.archaeology_seed)
     generation = world.generate_archaeological_catalogue(max_materialized=catalogue_cap)
