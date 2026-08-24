@@ -12,12 +12,12 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import curriculum_contract_v1 as contract_v1
-import archaeology_dense_world as archaeology
+import archaeology_field_world as archaeology
 import poari_archaeology_v2 as poari
 import procedural_sampler as procedural
 
-PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v2"
-GENERATOR_VERSION = "archaeometallurgy-poari-v2-dense1000"
+PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v3"
+GENERATOR_VERSION = "archaeometallurgy-poari-v3-fieldcarrier1000"
 DEFAULT_HYPOTHESIS = Path("hypotheses/atolia_atesis_1800_1000_v0.json")
 
 
@@ -34,74 +34,44 @@ def package_id(player_key: str) -> str:
     return digest[:20]
 
 
-def build_player_package(
-    *,
-    player_key: str,
-    hypothesis_path: Path = DEFAULT_HYPOTHESIS,
-    workshops: int = 3200,
-    catalogue_cap: int = 30000,
-    include_debug: bool = False,
-) -> Dict[str, Any]:
+def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYPOTHESIS,
+                         workshops: int = 3200, catalogue_cap: int = 30000,
+                         include_debug: bool = False) -> Dict[str, Any]:
     master_seed = seed_from_player_key(player_key)
     seeds = procedural.SeedBundle.from_master(master_seed)
     hypothesis = json.loads(hypothesis_path.read_text(encoding="utf-8"))
-
-    world = archaeology.DenseArchaeologicalObservationWorld(hypothesis, seed=seeds.world_seed)
+    world = archaeology.FieldArchaeologicalObservationWorld(hypothesis, seed=seeds.world_seed)
     world.build(workshop_count=workshops)
     world.rng = __import__("numpy").random.default_rng(seeds.archaeology_seed)
     generation = world.generate_archaeological_catalogue(max_materialized=catalogue_cap)
 
     sampler = poari.ArchaeologyPOARICareerSampler(world, seeds)
-    sampler.prepare_candidates()
-    objects = sampler.sample()
-    analyses = sampler.player_analyses()
-    report = sampler.career_report()
-
+    sampler.prepare_candidates(); objects = sampler.sample(); analyses = sampler.player_analyses(); report = sampler.career_report()
     selected_rows = [sampler.selected_by_slot[slot.index].row for slot in sampler.slots]
     selected_summary = world.catalogue_stage_summary(selected_rows)
     selected_summary["by_level"] = {
-        str(level): world.catalogue_stage_summary([
-            sampler.selected_by_slot[slot.index].row for slot in sampler.slots if slot.level == level
-        ])
+        str(level): world.catalogue_stage_summary([sampler.selected_by_slot[slot.index].row for slot in sampler.slots if slot.level == level])
         for level in range(1, 31)
     }
     world.archaeology_waterfall["career_selected"] = selected_summary
 
-    public_meta = {
-        "schema": PACKAGE_SCHEMA,
-        "generator_version": GENERATOR_VERSION,
-        "package_id": package_id(player_key),
-        "object_count": len(objects),
-        "levels": 30,
-        "objects_per_level": 10,
-        "reproducible": True,
-        "player_key_hash": hashlib.sha256(player_key.strip().encode("utf-8")).hexdigest()[:16],
-        "world_seed_fingerprint": hashlib.sha256(str(seeds.world_seed).encode("utf-8")).hexdigest()[:12],
-    }
-
     payload: Dict[str, Any] = {
-        "meta": public_meta,
-        "objects": objects,
-        "analyses": analyses,
-        "curriculum": contract_v1.as_jsonable(),
+        "meta": {
+            "schema": PACKAGE_SCHEMA, "generator_version": GENERATOR_VERSION, "package_id": package_id(player_key),
+            "object_count": len(objects), "levels": 30, "objects_per_level": 10, "reproducible": True,
+            "player_key_hash": hashlib.sha256(player_key.strip().encode("utf-8")).hexdigest()[:16],
+            "world_seed_fingerprint": hashlib.sha256(str(seeds.world_seed).encode("utf-8")).hexdigest()[:12],
+        },
+        "objects": objects, "analyses": analyses, "curriculum": contract_v1.as_jsonable(),
     }
-
     if include_debug:
         payload["debug"] = {
             "master_seed": master_seed,
-            "seed_bundle": {
-                "world": seeds.world_seed,
-                "archaeology": seeds.archaeology_seed,
-                "career": seeds.career_seed,
-                "measurement": seeds.measurement_seed,
-            },
-            "geography": world.geography_report,
-            "generation": generation,
-            "archaeology_waterfall": world.archaeology_waterfall,
-            "career_report": report,
-            "truth": sampler.debug_truth(),
-            "route_trace": sampler.debug_route_trace(),
-            "guilds_truth": world.guild_truth(),
+            "seed_bundle": {"world": seeds.world_seed, "archaeology": seeds.archaeology_seed,
+                            "career": seeds.career_seed, "measurement": seeds.measurement_seed},
+            "geography": world.geography_report, "generation": generation,
+            "archaeology_waterfall": world.archaeology_waterfall, "career_report": report,
+            "truth": sampler.debug_truth(), "route_trace": sampler.debug_route_trace(), "guilds_truth": world.guild_truth(),
         }
     return payload
 
@@ -114,21 +84,12 @@ def write_package(payload: Dict[str, Any], out_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate one reproducible 300-object player archaeology package from a player key.")
     parser.add_argument("player_key", help="Opaque player/account/save key. Same key + generator version => same career.")
-    parser.add_argument("--hypothesis", default=str(DEFAULT_HYPOTHESIS))
-    parser.add_argument("--out", default="out/player_game.json")
-    parser.add_argument("--workshops", type=int, default=3200)
-    parser.add_argument("--catalogue-cap", type=int, default=30000)
-    parser.add_argument("--debug", action="store_true")
-    args = parser.parse_args()
-    payload = build_player_package(
-        player_key=args.player_key,
-        hypothesis_path=Path(args.hypothesis),
-        workshops=args.workshops,
-        catalogue_cap=args.catalogue_cap,
-        include_debug=args.debug,
-    )
-    write_package(payload, Path(args.out))
-    print(json.dumps(payload["meta"], indent=2))
+    parser.add_argument("--hypothesis", default=str(DEFAULT_HYPOTHESIS)); parser.add_argument("--out", default="out/player_game.json")
+    parser.add_argument("--workshops", type=int, default=3200); parser.add_argument("--catalogue-cap", type=int, default=30000)
+    parser.add_argument("--debug", action="store_true"); args = parser.parse_args()
+    payload = build_player_package(player_key=args.player_key, hypothesis_path=Path(args.hypothesis), workshops=args.workshops,
+                                   catalogue_cap=args.catalogue_cap, include_debug=args.debug)
+    write_package(payload, Path(args.out)); print(json.dumps(payload["meta"], indent=2))
 
 
 if __name__ == "__main__":
