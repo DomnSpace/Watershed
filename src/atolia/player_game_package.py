@@ -57,6 +57,16 @@ def build_player_package(
     analyses = sampler.player_analyses()
     report = sampler.career_report()
 
+    selected_rows = [sampler.selected_by_slot[slot.index].row for slot in sampler.slots]
+    selected_summary = world.catalogue_stage_summary(selected_rows)
+    selected_summary["by_level"] = {
+        str(level): world.catalogue_stage_summary([
+            sampler.selected_by_slot[slot.index].row for slot in sampler.slots if slot.level == level
+        ])
+        for level in range(1, 31)
+    }
+    world.archaeology_waterfall["career_selected"] = selected_summary
+
     public_meta = {
         "schema": PACKAGE_SCHEMA,
         "generator_version": GENERATOR_VERSION,
