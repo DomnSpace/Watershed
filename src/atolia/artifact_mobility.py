@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import heapq
-import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 import numpy as np
 
 import provenance_field as base
+import temporal_directional_model as temporal
 import transport_fields as fields
 
 
-MOBILITY_MODEL_VERSION = "artifact-mobility-v1"
+MOBILITY_MODEL_VERSION = "artifact-mobility-v2-temporal-directional"
 
 PURPOSEFULNESS = {
     "ingot": 1.35, "scrap": 1.18, "sickle": 1.15, "chisel": 1.12, "awl": 1.10,
@@ -30,6 +30,8 @@ class MobilityRoute:
     field_crossings: float
     field_mix: Dict[str, float]
     generalized_cost: float
+    mean_direction_bias: float = 0.0
+    mean_route_temperature: float = 0.0
 
 
 def _adjacency(world: Any) -> Dict[str, List[Tuple[str, Any]]]:
@@ -59,6 +61,17 @@ def _physical_type(mode: str) -> str:
     return "land"
 
 
+def _temporal_field_attraction(world: Any, edge: Any, mix: Mapping[str, float], date_bc: int) -> float:
+    """Geometric field attraction after explicit temporal activation."""
+    alpha = fields.normalize_mix(mix)
+    raw = fields.edge_field_vector(world, edge, date_bc)
+    log_w = 0.0
+    for name, weight in alpha.items():
+        value = max(1e-9, raw[name] * temporal.field_temporal_activation(name, date_bc))
+        log_w += weight * np.log(value)
+    return float(np.exp(log_w))
+
+
 def _dijkstra(world: Any, start: str, goal: str, mix: Mapping[str, float], date_bc: int,
               object_class: str, jitter_seed: int | None = None) -> Tuple[List[str], float]:
     adjacency = _adjacency(world)
@@ -74,14 +87,16 @@ def _dijkstra(world: Any, start: str, goal: str, mix: Mapping[str, float], date_
         if node == goal:
             break
         for nxt, edge in adjacency.get(node, []):
-            km = max(1e-4, _edge_km(world, edge))
-            attraction = fields.effective_edge_weight(world, edge, mix, date_bc)
-            # Existing edge cost remains physical/cultural friction. Field attraction
-            # modulates rather than replaces it. Small deterministic jitter permits
-            # alternative biographies while retaining destination direction.
+            attraction = _temporal_field_attraction(world, edge, mix, date_bc)
+            direction_log = temporal.directional_log_bias(object_class, mix, edge, node, nxt, date_bc)
+            directed_attraction = attraction * float(np.exp(direction_log))
+            temp = temporal.route_temperature(object_class, str(edge.mode), date_bc)
+            # Temperature controls the scale of deterministic per-biography cost noise.
+            # River/local utilitarian paths stay narrow; Mediterranean prestige paths
+            # can choose among substantially more near-equivalent alternatives.
+            jitter = 1.0 if rng is None else float(np.exp(rng.normal(0.0, .10 * temp / max(.45, purpose))))
             base_cost = max(1e-6, float(edge.cost))
-            jitter = 1.0 if rng is None else float(np.exp(rng.normal(0.0, .055 / max(.45, purpose))))
-            step = base_cost * jitter / max(.10, attraction) ** (1.0 / max(.42, purpose))
+            step = base_cost * jitter / max(.08, directed_attraction) ** (1.0 / max(.42, purpose))
             nd = cur_d + step
             if nd < dist.get(nxt, float("inf")):
                 dist[nxt] = nd
@@ -104,6 +119,8 @@ def route_for_object(world: Any, bundle: Any, object_class: str, date_bc: int,
     km = 0.0
     physical_crossings = 0
     field_crossings = 0.0
+    direction_values: List[float] = []
+    temperature_values: List[float] = []
     previous_type = None
     previous_sig = None
     edge_lookup: Dict[Tuple[str, str], Any] = {}
@@ -122,10 +139,14 @@ def route_for_object(world: Any, bundle: Any, object_class: str, date_bc: int,
         if previous_sig is not None:
             field_crossings += fields.js_divergence(previous_sig, sig)
         previous_sig = sig
+        direction_values.append(temporal.directional_log_bias(object_class, mix, edge, a, b, date_bc))
+        temperature_values.append(temporal.route_temperature(object_class, str(edge.mode), date_bc))
     return MobilityRoute(
         nodes=tuple(nodes), km=float(km), hops=max(0, len(nodes) - 1),
         physical_crossings=int(physical_crossings), field_crossings=float(field_crossings),
         field_mix=dict(mix), generalized_cost=float(cost),
+        mean_direction_bias=float(np.mean(direction_values)) if direction_values else 0.0,
+        mean_route_temperature=float(np.mean(temperature_values)) if temperature_values else 0.0,
     )
 
 
