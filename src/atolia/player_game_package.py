@@ -16,11 +16,13 @@ import archaeology_temporal_world as archaeology
 import acquisition_campaign as campaign
 import cached_acquisition_campaign as cached_campaign
 import campaign_substrate_cache as substrate_cache
+import ecmwf_acquisition_campaign as ecmwf_campaign
 import procedural_sampler as procedural
 
-PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v6"
-GENERATOR_VERSION = "archaeometallurgy-poari-v6-shared-substrate"
+PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v7"
+GENERATOR_VERSION = "archaeometallurgy-poari-v7-ecmwf-runtime"
 DEFAULT_HYPOTHESIS = Path("hypotheses/atolia_atesis_1800_1000_v0.json")
+DEFAULT_RUNTIME = ecmwf_campaign.DEFAULT_RUNTIME
 
 
 def seed_from_player_key(player_key: str, namespace: str = "dr-corrosion-archaeometallurgy-v1") -> int:
@@ -48,36 +50,62 @@ def _player_seeds(player_key: str, canonical_world_seed: int) -> procedural.Seed
     )
 
 
+def _runtime_world_metadata(runtime_path: Path) -> tuple[int, int]:
+    """Read only canonical world seed/workshop count from the compact runtime."""
+    from netCDF4 import Dataset
+
+    with Dataset(runtime_path, "r") as ds:
+        schema = str(getattr(ds, "schema", ""))
+        if schema != ecmwf_campaign.RUNTIME_SCHEMA:
+            raise ValueError(f"not an Atolia ECMWF runtime: schema={schema!r}")
+        world_seed = int(getattr(ds, "world_seed", substrate_cache.DEFAULT_CANONICAL_WORLD_SEED))
+        workshop_count = int(getattr(ds, "workshop_count", substrate_cache.DEFAULT_WORKSHOPS))
+    return world_seed, workshop_count
+
+
 def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYPOTHESIS,
                          workshops: int = substrate_cache.DEFAULT_WORKSHOPS,
                          catalogue_cap: int = 30000,
                          generate_validation_catalogue: bool = False,
                          include_debug: bool = False,
+                         runtime_path: Path = DEFAULT_RUNTIME,
                          substrate_path: Path = substrate_cache.DEFAULT_CACHE_PATH,
+                         allow_legacy_json_cache: bool = False,
                          allow_slow_build: bool = False) -> Dict[str, Any]:
-    """Generate one 300-find career from a shared precomputed hidden-world substrate.
+    """Generate one 300-find career from the compact shared ECMWF runtime.
 
-    Normal player generation never runs the expensive Round-3 propagation. If the
-    cache is missing we fail immediately unless allow_slow_build=True is explicitly
-    requested by a developer. That slow path writes the cache for all later players.
+    Normal player generation opens ``atolia_runtime_v1.nc`` and keeps the latent
+    profile field in NetCDF/NumPy form.  It does not deserialize the giant JSON
+    loss substrate and does not rerun propagation.
+
+    ``allow_legacy_json_cache`` is an explicit developer compatibility path for an
+    existing v1 gzip JSON cache. ``allow_slow_build`` remains the expensive
+    developer-only last resort and writes that legacy cache; it is never the
+    shipping path.
     """
     hypothesis = json.loads(hypothesis_path.read_text(encoding="utf-8"))
+    runtime_path = Path(runtime_path)
     substrate_path = Path(substrate_path)
     substrate = None
 
-    if substrate_path.exists():
+    if runtime_path.exists():
+        canonical_world_seed, workshops = _runtime_world_metadata(runtime_path)
+        substrate_source = "ecmwf_netcdf_runtime"
+    elif allow_legacy_json_cache and substrate_path.exists():
         substrate = substrate_cache.load_payload(substrate_path)
         substrate_cache.validate_payload(substrate, hypothesis)
         canonical_world_seed = int(substrate["world_seed"])
         workshops = int(substrate["workshop_count"])
+        substrate_source = "legacy_json_cache"
     else:
         if not allow_slow_build:
             raise FileNotFoundError(
-                f"Shared campaign substrate not found: {substrate_path}. "
-                "Build it once with `python src/atolia/build_campaign_substrate.py`, "
-                "or explicitly use --allow-slow-build for a developer fallback."
+                f"Compact ECMWF runtime not found: {runtime_path}. "
+                "Build it from an existing master with `python src/atolia/build_runtime_from_master.py`. "
+                "Developer compatibility may explicitly use --allow-legacy-json-cache if the old gzip cache exists."
             )
         canonical_world_seed = substrate_cache.DEFAULT_CANONICAL_WORLD_SEED
+        substrate_source = "slow_build_legacy_cache"
 
     master_seed = seed_from_player_key(player_key)
     seeds = _player_seeds(player_key, canonical_world_seed)
@@ -89,14 +117,19 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
     if generate_validation_catalogue:
         validation_generation = world.generate_archaeological_catalogue(max_materialized=catalogue_cap)
 
-    if substrate is not None:
+    if runtime_path.exists():
+        sampler = ecmwf_campaign.ECMWFAcquisitionCampaignSampler(
+            world,
+            seeds,
+            runtime_path=runtime_path,
+        )
+        sampler.prepare_candidates()
+        substrate_fingerprint = sampler.runtime_fingerprint
+    elif substrate is not None:
         sampler = cached_campaign.CachedAcquisitionCampaignSampler(world, seeds, substrate_payload=substrate)
         sampler.prepare_candidates()
-        substrate_source = "precomputed_cache"
         substrate_fingerprint = substrate_cache.payload_fingerprint(substrate)
     else:
-        # Explicit developer-only fallback. Do the expensive calculation once, then
-        # persist the exact loss substrate so subsequent player runs are cheap.
         sampler = campaign.AcquisitionCampaignSampler(world, seeds)
         sampler.prepare_candidates()
         substrate = substrate_cache.build_payload(
@@ -109,74 +142,92 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
             geography_report=getattr(world, "geography_report", {}),
         )
         substrate_cache.save_payload(substrate, substrate_path)
-        substrate_source = "slow_build_then_cached"
         substrate_fingerprint = substrate_cache.payload_fingerprint(substrate)
 
-    objects = sampler.sample()
-    analyses = sampler.player_analyses()
-    report = sampler.career_report()
+    try:
+        objects = sampler.sample()
+        analyses = sampler.player_analyses()
+        report = sampler.career_report()
 
-    selected_rows = [sampler.selected_by_slot[slot.index].row for slot in sampler.slots]
-    selected_summary = world.catalogue_stage_summary(selected_rows)
-    selected_summary["by_level"] = {
-        str(level): world.catalogue_stage_summary([
-            sampler.selected_by_slot[slot.index].row for slot in sampler.slots if slot.level == level
-        ]) for level in range(1, 31)
-    }
-
-    payload: Dict[str, Any] = {
-        "meta": {
-            "schema": PACKAGE_SCHEMA,
-            "generator_version": GENERATOR_VERSION,
-            "package_id": package_id(player_key),
-            "object_count": len(objects),
-            "levels": 30,
-            "objects_per_level": 10,
-            "reproducible": True,
-            "player_key_hash": hashlib.sha256(player_key.strip().encode("utf-8")).hexdigest()[:16],
-            "canonical_world_seed_fingerprint": hashlib.sha256(str(canonical_world_seed).encode("utf-8")).hexdigest()[:12],
-            "physical_artifact_truth": True,
-            "tool_specific_measurement_error": True,
-            "career_crystallization": campaign.ACQUISITION_VERSION,
-            "career_source": "shared latent loss/intensity substrate",
-            "campaign_substrate_source": substrate_source,
-            "campaign_substrate_fingerprint": substrate_fingerprint,
-            "validation_catalogue_used_for_selection": False,
-        },
-        "objects": objects,
-        "analyses": analyses,
-        "curriculum": contract_v1.as_jsonable(),
-        "career_schedule": [
-            {
-                "regime": r.name, "start": r.start, "end": r.end, "p": r.p,
-                "description": r.description,
-            } for r in campaign.REGIMES
-        ],
-    }
-    if include_debug:
-        payload["debug"] = {
-            "master_seed": master_seed,
-            "seed_bundle": {
-                "canonical_world": canonical_world_seed,
-                "archaeology": seeds.archaeology_seed,
-                "career": seeds.career_seed,
-                "measurement": seeds.measurement_seed,
-            },
-            "campaign_substrate": {
-                "path": str(substrate_path),
-                "fingerprint": substrate_fingerprint,
-                "source": substrate_source,
-                "loss_strata": len(substrate.get("loss_strata", [])),
-            },
-            "geography": world.geography_report,
-            "validation_catalogue_generation": validation_generation,
-            "career_selected_summary": selected_summary,
-            "career_report": report,
-            "truth": sampler.debug_truth(),
-            "route_trace": sampler.debug_route_trace(),
-            "guilds_truth": world.guild_truth(),
+        selected_rows = [sampler.selected_by_slot[slot.index].row for slot in sampler.slots]
+        selected_summary = world.catalogue_stage_summary(selected_rows)
+        selected_summary["by_level"] = {
+            str(level): world.catalogue_stage_summary([
+                sampler.selected_by_slot[slot.index].row for slot in sampler.slots if slot.level == level
+            ]) for level in range(1, 31)
         }
-    return payload
+
+        payload: Dict[str, Any] = {
+            "meta": {
+                "schema": PACKAGE_SCHEMA,
+                "generator_version": GENERATOR_VERSION,
+                "package_id": package_id(player_key),
+                "object_count": len(objects),
+                "levels": 30,
+                "objects_per_level": 10,
+                "reproducible": True,
+                "player_key_hash": hashlib.sha256(player_key.strip().encode("utf-8")).hexdigest()[:16],
+                "canonical_world_seed_fingerprint": hashlib.sha256(str(canonical_world_seed).encode("utf-8")).hexdigest()[:12],
+                "physical_artifact_truth": True,
+                "tool_specific_measurement_error": True,
+                "career_crystallization": campaign.ACQUISITION_VERSION,
+                "career_source": "shared latent loss/intensity field",
+                "campaign_substrate_source": substrate_source,
+                "campaign_substrate_fingerprint": substrate_fingerprint,
+                "runtime_materialization": (
+                    "selected profile only" if substrate_source == "ecmwf_netcdf_runtime" else "legacy"
+                ),
+                "validation_catalogue_used_for_selection": False,
+            },
+            "objects": objects,
+            "analyses": analyses,
+            "curriculum": contract_v1.as_jsonable(),
+            "career_schedule": [
+                {
+                    "regime": r.name, "start": r.start, "end": r.end, "p": r.p,
+                    "description": r.description,
+                } for r in campaign.REGIMES
+            ],
+        }
+        if include_debug:
+            debug_substrate: Dict[str, Any] = {
+                "source": substrate_source,
+                "fingerprint": substrate_fingerprint,
+            }
+            if substrate_source == "ecmwf_netcdf_runtime":
+                debug_substrate.update({
+                    "runtime_path": str(runtime_path),
+                    "runtime_profiles": int(sampler.runtime_store.profile_count),
+                    "production_cells": int(sampler.runtime_store.cell_count),
+                    "python_loss_strata_at_prepare": len(sampler.loss_strata),
+                })
+            elif substrate is not None:
+                debug_substrate.update({
+                    "path": str(substrate_path),
+                    "loss_strata": len(substrate.get("loss_strata", [])),
+                })
+            payload["debug"] = {
+                "master_seed": master_seed,
+                "seed_bundle": {
+                    "canonical_world": canonical_world_seed,
+                    "archaeology": seeds.archaeology_seed,
+                    "career": seeds.career_seed,
+                    "measurement": seeds.measurement_seed,
+                },
+                "campaign_substrate": debug_substrate,
+                "geography": world.geography_report,
+                "validation_catalogue_generation": validation_generation,
+                "career_selected_summary": selected_summary,
+                "career_report": report,
+                "truth": sampler.debug_truth(),
+                "route_trace": sampler.debug_route_trace(),
+                "guilds_truth": world.guild_truth(),
+            }
+        return payload
+    finally:
+        close_runtime = getattr(sampler, "close_runtime", None)
+        if callable(close_runtime):
+            close_runtime()
 
 
 def write_package(payload: Dict[str, Any], out_path: Path) -> None:
@@ -186,17 +237,21 @@ def write_package(payload: Dict[str, Any], out_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate one reproducible 300-object archaeology career from a shared precomputed world substrate."
+        description="Generate one reproducible 300-object archaeology career from the compact shared ECMWF runtime."
     )
     parser.add_argument("player_key", help="Opaque player/account/save key. Same key + generator version => same career.")
     parser.add_argument("--hypothesis", default=str(DEFAULT_HYPOTHESIS))
     parser.add_argument("--out", default="out/player_game.json")
     parser.add_argument("--workshops", type=int, default=substrate_cache.DEFAULT_WORKSHOPS,
-                        help="Developer slow-build only; normal cached runs use the cache's workshop count")
+                        help="Developer fallback only; normal runtime runs use the runtime's workshop count")
+    parser.add_argument("--runtime", default=str(DEFAULT_RUNTIME),
+                        help="Compact shared ECMWF runtime (.nc); normal shipping substrate")
     parser.add_argument("--substrate", default=str(substrate_cache.DEFAULT_CACHE_PATH),
-                        help="Shared precomputed campaign substrate (.json or .json.gz)")
+                        help="Legacy developer gzip JSON substrate; ignored unless explicitly allowed")
+    parser.add_argument("--allow-legacy-json-cache", action="store_true",
+                        help="Developer compatibility only: use old gzip cache when the runtime is absent")
     parser.add_argument("--allow-slow-build", action="store_true",
-                        help="Developer only: if cache is absent, run expensive propagation once and save it")
+                        help="Developer only: if no runtime/cache exists, rerun expensive propagation and save the legacy cache")
     parser.add_argument("--catalogue-cap", type=int, default=30000,
                         help="Size of optional validation catalogue; not used to select the 300 career finds")
     parser.add_argument("--validation-catalogue", action="store_true",
@@ -210,7 +265,9 @@ def main() -> None:
         catalogue_cap=args.catalogue_cap,
         generate_validation_catalogue=args.validation_catalogue,
         include_debug=args.debug,
+        runtime_path=Path(args.runtime),
         substrate_path=Path(args.substrate),
+        allow_legacy_json_cache=args.allow_legacy_json_cache,
         allow_slow_build=args.allow_slow_build,
     )
     write_package(payload, Path(args.out))
