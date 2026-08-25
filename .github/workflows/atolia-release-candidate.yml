@@ -16,8 +16,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install Atolia runtime
-        run: python -m pip install -r requirements-atolia.txt
+      - name: Install Atolia runtime and test runner
+        run: |
+          python -m pip install -r requirements-atolia.txt
+          python -m pip install pytest
       - name: Compile current archaeology runtime
         run: python -m compileall -q src/atolia generate_player_game.py
       - name: Release invariants
@@ -32,5 +34,3 @@ jobs:
         run: |
           python generate_player_game.py --help | grep -- '--substrate'
           python generate_player_game.py --help | grep -- '--allow-slow-build'
-      - name: No repository cache is required for static validation
-        run: test ! -e cache/atolia_campaign_substrate_v1.json.gz || true
