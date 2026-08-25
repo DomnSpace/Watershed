@@ -84,9 +84,18 @@ class CellFlowReport:
     loss_strata: List[LossStratum] = field(default_factory=list)
 
     def conservation_error(self) -> float:
-        lhs = self.circulation_seed + self.recycle_flux
+        """Endpoint mass closure for one production cell.
+
+        Recycling and transfer are internal throughput: recycled material is
+        explicitly reinserted into the active field in ``propagate_cell`` and a
+        transfer merely changes node.  They therefore belong in diagnostics,
+        not on either side of the source/sink closure.
+        """
         rhs = self.return_flux + self.loss_flux + self.retire_flux + self.residual_active
-        return float(lhs - rhs)
+        return float(self.circulation_seed - rhs)
+
+    def relative_conservation_error(self) -> float:
+        return float(self.conservation_error() / max(1.0, self.circulation_seed))
 
 
 def _safe_entropy(mix: Mapping[str, float]) -> float:
@@ -337,7 +346,6 @@ def propagate_cell(world: Any, cell: ProductionCell, max_steps: int = DEFAULT_ST
                 report.retire_flux += cont
                 continue
             report.transfer_flux += cont
-            cur_ptype = None
             for target, edge, p in transitions:
                 flow = cont * p
                 if flow <= MIN_ACTIVE_INTENSITY:
@@ -391,7 +399,11 @@ def propagate_world(world: Any, max_steps: int = DEFAULT_STEPS) -> Tuple[List[Ce
         totals["retire_flux"] += r.retire_flux
         totals["residual_active"] += r.residual_active
         strata += len(r.loss_strata)
-    conservation = totals["circulation_seed"] + totals["recycle_flux"] - (
+
+    # Endpoint closure only counts the original circulation seed and absorbing
+    # sinks/final active material.  transfer_flux and recycle_flux are internal
+    # throughput and are retained separately as diagnostics.
+    conservation = totals["circulation_seed"] - (
         totals["return_flux"] + totals["loss_flux"] + totals["retire_flux"] + totals["residual_active"]
     )
     summary = {
@@ -400,6 +412,8 @@ def propagate_world(world: Any, max_steps: int = DEFAULT_STEPS) -> Tuple[List[Ce
         "loss_strata": strata,
         **{k: float(v) for k, v in totals.items()},
         "conservation_error": float(conservation),
-        "relative_conservation_error": float(conservation / max(1.0, totals["circulation_seed"] + totals["recycle_flux"])),
+        "relative_conservation_error": float(conservation / max(1.0, totals["circulation_seed"])),
+        "transfer_flux_semantics": "internal_throughput",
+        "recycle_flux_semantics": "internal_throughput",
     }
     return reports, summary
