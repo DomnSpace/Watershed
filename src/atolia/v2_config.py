@@ -4,14 +4,21 @@ from __future__ import annotations
 
 This module contains world-scale targets and compact enumerations. The simulation
 must treat these as accounting/calibration targets, not archaeological observations.
+
+The v2 world intentionally extends the structural horizon to 2000--1000 BCE.
+The inherited v1 object catalogue began at 1800 BCE, so importing this module
+installs a v2-only availability overlay before the structural world is built.
+These are broad simulation priors, not typological first-appearance claims.
 """
 
 from dataclasses import asdict, dataclass
 from typing import Dict, Tuple
 
+import provenance_field as _base
+
 V2_MASTER_SCHEMA = "atolia.ecmwf-master.v2-metal-lineage"
 V2_RUNTIME_SCHEMA = "atolia.ecmwf-runtime.v2-metal-lineage"
-V2_MODEL_VERSION = "atolia-direct-v2-step5-a2"
+V2_MODEL_VERSION = "atolia-direct-v2-step5-a3"
 
 ELEMENTS: Tuple[str, ...] = ("Cu", "Sn", "As", "Pb", "Ag", "Au", "Fe", "Zn")
 PB_ISOTOPES: Tuple[str, ...] = ("Pb204", "Pb206", "Pb207", "Pb208")
@@ -63,6 +70,50 @@ TERMINAL_KINDS: Tuple[str, ...] = (
 
 ATESIS_SOURCE_IDS = frozenset({"upper_atesis", "trentino_east"})
 ATESIS_NODE_HINTS = ("atesis", "trento", "bolzano", "merano", "salorno", "verona_plain", "legnago")
+
+# Broad v2 process-availability priors.  They exist to keep the 2000--1000 BCE
+# simulation physically populated without pretending these are exact archaeological
+# first-appearance dates.  Later regional typology can further suppress a class.
+V2_OBJECT_CLASS_START_BC: Dict[str, int] = {
+    "bead": 2000,
+    "awl": 2000,
+    "pin": 2000,
+    "ring": 2000,
+    "fitting": 2000,
+    "knife": 2000,
+    "sickle": 1900,
+    "chisel": 2000,
+    "axe": 2000,
+    "spearhead": 1900,
+    "dagger": 2000,
+    "sword": 1650,
+    "vessel": 1600,
+    "ornament": 2000,
+    "figurine": 1800,
+    "ingot": 2000,
+    "scrap": 2000,
+}
+
+
+def install_v2_object_chronology() -> None:
+    """Install the v2-only class availability overlay into the shared v1 table.
+
+    The release mass transform calls ``world._class_weights`` which ultimately
+    reads ``provenance_field.OBJECT_CLASSES``.  A 2000 BCE structural slice must
+    therefore have at least one physically valid class before conservation is
+    evaluated.  We mutate only the start bound and preserve every v1 mass/weight,
+    survival and status parameter.
+    """
+    missing = sorted(set(V2_OBJECT_CLASS_START_BC) - set(_base.OBJECT_CLASSES))
+    if missing:
+        raise RuntimeError(f"v2 chronology refers to unknown object classes: {missing}")
+    for name, start_bc in V2_OBJECT_CLASS_START_BC.items():
+        _base.OBJECT_CLASSES[name]["start"] = int(start_bc)
+
+
+# v2_config is imported by the v2 builder before world.build(), so install the
+# horizon overlay immediately.  No v1 entry point imports this module.
+install_v2_object_chronology()
 
 CARRIER_BY_CLASS: Dict[str, Tuple[Tuple[str, float], ...]] = {
     "sword": (("warrior_frontier", .62), ("mounted_retinue", .18), ("court_gift_prestige", .12), ("merchant_pack", .08)),
