@@ -14,6 +14,7 @@ from typing import Any, Dict, Mapping, Sequence
 
 import numpy as np
 import guild_model
+import v2_config as cfg
 
 @dataclass(frozen=True)
 class ToolArchetype:
@@ -124,6 +125,29 @@ def _nickname(archetype: ToolArchetype, depth: int, affinities: Mapping[str, flo
         stem = stems.get(archetype.subtype, archetype.subtype.replace("_", "-"))
     return f"{stem} v{max(1, int(depth))}"
 
+def _install_v2_workshop_spans(world: Any, world_seed: int) -> None:
+    """Spread inherited v1 workshop cohorts across the full 2000--1000 BCE v2 horizon.
+
+    The v1 generator hard-clamped workshop starts to 1800 BCE.  V2 needs active
+    practitioners during its 2000--1800 prelude as well.  Preserve each workshop's
+    existing duration scale and all node/technical/capacity properties, but place
+    its cohort deterministically across the full millennium.
+    """
+    start_bc = int(cfg.DEFAULT_CONFIG.world_start_bc)
+    end_bc = int(cfg.DEFAULT_CONFIG.world_end_bc)
+    span = max(100, start_bc - end_bc)
+    for workshop in world.workshops:
+        rng = np.random.default_rng(_seed64(world_seed, workshop.id, "v2-workshop-span"))
+        old_duration = max(35, int(workshop.start_bc) - int(workshop.end_bc))
+        duration = int(np.clip(old_duration * np.exp(rng.normal(0.0, .10)), 35, 340))
+        margin = max(20, min(80, duration // 3))
+        low = end_bc + margin
+        high = start_bc - margin
+        midpoint = int(rng.integers(low, high + 1)) if high > low else (start_bc + end_bc) // 2
+        workshop.start_bc = min(start_bc, midpoint + duration // 2)
+        workshop.end_bc = max(end_bc, midpoint - duration // 2)
+
+
 def seed_workshop_ecology(world: Any, workshop: Any, world_seed: int) -> WorkshopEcology:
     affinities = guild_model.workshop_affinities(world, workshop)
     rng = np.random.default_rng(_seed64(world_seed, workshop.id, "v2-tools"))
@@ -153,6 +177,7 @@ def seed_workshop_ecology(world: Any, workshop: Any, world_seed: int) -> Worksho
     return WorkshopEcology(str(workshop.id), str(workshop.node_id), int(workshop.start_bc), int(workshop.end_bc), int(workshop.workers), {k:float(v) for k,v in affinities.items()}, tools, {op:cap_sum[op]/max(1,cap_n[op]) for op in cap_sum}, float(np.clip(.38+.42*np.mean(list(affinities.values()))+rng.normal(0,.07),.05,.95)), float(max(0.0,workshop.capacity_weight)))
 
 def seed_all_workshop_ecologies(world: Any, world_seed: int) -> list[WorkshopEcology]:
+    _install_v2_workshop_spans(world, world_seed)
     return [seed_workshop_ecology(world, w, world_seed) for w in world.workshops]
 
 def operation_capability(ecology: WorkshopEcology, operation: str, *, operator_skill: float, material_fit: float, support_fit: float=1.0, thermal_fit: float=1.0, measurement_fit: float=1.0) -> float:
