@@ -1,0 +1,122 @@
+{
+  "scenario_id": "atolia-v2-2000-1000-structural",
+  "title": "Atolia v2 1000-year structural carrier prior",
+  "status": "neutral structural prior for the direct-NetCDF v2 world; mass accounting lives in v2_config.py",
+  "claim": {
+    "material": "legacy copper-equivalent corridor intensity used only to shape structural production cells",
+    "measure": "relative structural carrier intensity; not the authoritative v2 primary-metal ledger",
+    "checkpoint_id": "verona_plain_gate",
+    "start_bc": 2000,
+    "end_bc": 1000,
+    "target_tonnes": 200000,
+    "mean_tonnes_per_year": 200.0,
+    "interpretation": "This 200,000 t value is retained only as a structural intensity normalization inherited from v1. The direct v2 builder separately conserves 1 Mt primary Cu world-total and targets 200 kt Atesis-associated primary Cu; these quantities must not be conflated with this corridor prior."
+  },
+  "time_prior": [
+    {
+      "start_bc": 2000,
+      "end_bc": 1800,
+      "share": 0.02,
+      "tonnes": 4000,
+      "mean_tonnes_per_year": 20.0,
+      "label": "early sparse structural prelude"
+    },
+    {
+      "start_bc": 1800,
+      "end_bc": 1600,
+      "share": 0.08,
+      "tonnes": 16000,
+      "mean_tonnes_per_year": 80.0,
+      "label": "early corridor growth"
+    },
+    {
+      "start_bc": 1600,
+      "end_bc": 1400,
+      "share": 0.20,
+      "tonnes": 40000,
+      "mean_tonnes_per_year": 200.0,
+      "label": "expansion"
+    },
+    {
+      "start_bc": 1400,
+      "end_bc": 1200,
+      "share": 0.38,
+      "tonnes": 76000,
+      "mean_tonnes_per_year": 380.0,
+      "label": "high structural connectivity"
+    },
+    {
+      "start_bc": 1200,
+      "end_bc": 1000,
+      "share": 0.32,
+      "tonnes": 64000,
+      "mean_tonnes_per_year": 320.0,
+      "label": "late redistribution and transformation"
+    }
+  ],
+  "time_prior_note": "The phase split is deliberately a broad structural prior. It is not a claim that 200 kt physically crossed Verona, nor that 200 kt were mined in the Atesis basin. v2 primary-metal accounting is external to this file.",
+  "geometry_note": "Waypoints are only a stable skeleton for the legacy structural world. Step 4.5/Step 5 hydrological evidence, inferred palaeochannels and sampled hydro realization provide the actual v2 carrier surface.",
+  "corridor_waypoints": [
+    {"id": "upper_atesis", "label": "Upper Atesis", "lat": 46.80, "lon": 10.53},
+    {"id": "merano_gate", "label": "Merano valley gate", "lat": 46.67, "lon": 11.16},
+    {"id": "bolzano_confluence", "label": "Bolzano confluence", "lat": 46.50, "lon": 11.35},
+    {"id": "trento_gate", "label": "Trento valley gate", "lat": 46.07, "lon": 11.12},
+    {"id": "rovereto_gate", "label": "Rovereto valley gate", "lat": 45.89, "lon": 11.04},
+    {"id": "verona_plain_gate", "label": "Verona plain gate", "lat": 45.44, "lon": 10.99},
+    {"id": "legnago_lower_atesis", "label": "Lower Atesis", "lat": 45.19, "lon": 11.31},
+    {"id": "adriatic_outlet", "label": "Adriatic outlet proxy", "lat": 45.14, "lon": 12.32}
+  ],
+  "evidence_anchors": [
+    {
+      "id": "mitterberg_scale",
+      "label": "Mitterberg scale comparator",
+      "role": "external production-scale comparator; not assumed to feed the Atesis",
+      "lat": 47.39,
+      "lon": 13.13,
+      "known_order_tonnes": 20000,
+      "start_bc": 1600,
+      "end_bc": 1200,
+      "source": "Pernicka, Lutz & Stoellner, Bronze Age Copper Produced at Mitterberg and its Distribution"
+    },
+    {
+      "id": "trentino_field",
+      "label": "Eastern Trentino smelting field",
+      "role": "production-field prior; exact v2 contribution remains latent",
+      "lat": 46.12,
+      "lon": 11.35,
+      "mapped_smelting_sites_order": 198,
+      "start_bc": 1600,
+      "end_bc": 900,
+      "source": "Bellintani et al., Prehistoric copper production in Trentino"
+    },
+    {
+      "id": "acqua_fredda",
+      "label": "Acqua Fredda / Redebus Pass",
+      "role": "southern-Alpine production-scale anchor",
+      "lat": 46.15,
+      "lon": 11.32,
+      "estimated_copper_tonnes_min": 150,
+      "estimated_copper_tonnes_max": 200,
+      "start_bc": 1300,
+      "end_bc": 1100,
+      "source": "Deutsches Bergbau-Museum, Praehistorische Kupferproduktion in Trentino Orientale"
+    },
+    {
+      "id": "frattesina",
+      "label": "Frattesina redistribution node",
+      "role": "late trans-shipment / manufacturing comparator near the Po-Adriatic system",
+      "lat": 45.02,
+      "lon": 11.42,
+      "start_bc": 1200,
+      "end_bc": 900,
+      "source": "Pearce, Bellintani & Nicolis, Frattesina and the later Bronze Age–Early Iron Age metals trade"
+    }
+  ],
+  "tests": [
+    "Can geological source fields satisfy the independent v2 primary-metal ledger without impossible extraction?",
+    "Does the implied slag, charcoal, timber and labour footprint fit the simulated mining/metallurgical ecology?",
+    "Do geochemical mixtures require several source fields and repeated recycling?",
+    "Does neutral palaeohydrology create structured carrier alternatives rather than a forced Atesis route?",
+    "Can the generated world be distinguished from lower-throughput/null worlds after preservation and discovery bias?"
+  ]
+}
