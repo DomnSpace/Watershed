@@ -2,9 +2,8 @@ from __future__ import annotations
 
 """Canonical configuration for the direct-NetCDF Atolia v2 world.
 
-This module contains only world-scale targets and compact enumerations.  The
-simulation code must treat these as accounting/calibration targets, not as
-archaeological observations.
+This module contains world-scale targets and compact enumerations. The simulation
+must treat these as accounting/calibration targets, not archaeological observations.
 """
 
 from dataclasses import asdict, dataclass
@@ -12,7 +11,7 @@ from typing import Dict, Tuple
 
 V2_MASTER_SCHEMA = "atolia.ecmwf-master.v2-metal-lineage"
 V2_RUNTIME_SCHEMA = "atolia.ecmwf-runtime.v2-metal-lineage"
-V2_MODEL_VERSION = "atolia-direct-v2-step5-a1"
+V2_MODEL_VERSION = "atolia-direct-v2-step5-a2"
 
 ELEMENTS: Tuple[str, ...] = ("Cu", "Sn", "As", "Pb", "Ag", "Au", "Fe", "Zn")
 PB_ISOTOPES: Tuple[str, ...] = ("Pb204", "Pb206", "Pb207", "Pb208")
@@ -33,6 +32,10 @@ STATE_MOMENTS: Tuple[str, ...] = (
     "current_object_age_years",
     "external_exchange_fraction",
     "atesis_crossing_count",
+    "manufacture_quality",
+    "guild_exposure_entropy",
+    "workshop_tool_depth_mean",
+    "workshop_tool_depth_max",
 )
 COVARIANCE_MOMENTS: Tuple[str, ...] = (
     "cumulative_metal_distance_km",
@@ -43,6 +46,7 @@ COVARIANCE_MOMENTS: Tuple[str, ...] = (
     "network_embedding",
     "water_mode_count",
     "broker_cycle_count",
+    "manufacture_quality",
 )
 
 CARRIER_ROLES: Tuple[str, ...] = (
