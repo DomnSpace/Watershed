@@ -232,11 +232,16 @@ def write_spine_master(
     }
 
 
-def _read_string(var: Any, index: int) -> str:
-    value = var[index]
-    if isinstance(value, bytes):
-        return value.decode("utf-8")
-    return str(value)
+def _read_strings(var: Any) -> list[str]:
+    values = var[:]
+    return [
+        value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        for value in values
+    ]
+
+
+def _read_numeric(group: Any, name: str) -> Any:
+    return group.variables[name][:]
 
 
 def read_spine_master(path: Path) -> dict[str, Any]:
@@ -247,39 +252,61 @@ def read_spine_master(path: Path) -> dict[str, Any]:
         cell_count = len(gc.dimensions["cell"])
         loss_count = len(gl.dimensions["loss"])
 
+        # Read each backend variable once. Scalar var[i] reads across every row
+        # are semantically equivalent but catastrophically slow in WASM and add
+        # needless C-extension crossings even on native CPython.
+        c_cell_index = _read_numeric(gc, "cell_index")
+        c_bundle_id = _read_strings(gc.variables["bundle_id"])
+        c_bundle_family = _read_strings(gc.variables["bundle_family"])
+        c_object_class = _read_strings(gc.variables["object_class"])
+        c_date_bc = _read_numeric(gc, "date_bc")
+        c_origin = _read_strings(gc.variables["origin"])
+        c_destination = _read_strings(gc.variables["destination"])
+        c_source_mix_json = _read_strings(gc.variables["source_mix_json"])
+        c_float = {name: _read_numeric(gc, name) for name in CELL_FLOAT_FIELDS}
+        c_max_active_nodes = _read_numeric(gc, "max_active_nodes")
+        c_loss_strata_count = _read_numeric(gc, "loss_strata_count")
+
         cells: list[dict[str, Any]] = []
         for i in range(cell_count):
             row: dict[str, Any] = {
-                "cell_index": int(gc.variables["cell_index"][i]),
-                "bundle_id": _read_string(gc.variables["bundle_id"], i),
-                "bundle_family": _read_string(gc.variables["bundle_family"], i),
-                "object_class": _read_string(gc.variables["object_class"], i),
-                "date_bc": int(gc.variables["date_bc"][i]),
-                "origin": _read_string(gc.variables["origin"], i),
-                "destination": _read_string(gc.variables["destination"], i),
-                "source_mix_json": _read_string(gc.variables["source_mix_json"], i),
+                "cell_index": int(c_cell_index[i]),
+                "bundle_id": c_bundle_id[i],
+                "bundle_family": c_bundle_family[i],
+                "object_class": c_object_class[i],
+                "date_bc": int(c_date_bc[i]),
+                "origin": c_origin[i],
+                "destination": c_destination[i],
+                "source_mix_json": c_source_mix_json[i],
             }
             for name in CELL_FLOAT_FIELDS:
-                row[name] = float(gc.variables[name][i])
-            row["max_active_nodes"] = int(gc.variables["max_active_nodes"][i])
-            row["loss_strata_count"] = int(gc.variables["loss_strata_count"][i])
+                row[name] = float(c_float[name][i])
+            row["max_active_nodes"] = int(c_max_active_nodes[i])
+            row["loss_strata_count"] = int(c_loss_strata_count[i])
             cells.append(row)
+
+        l_loss_index = _read_numeric(gl, "loss_index")
+        l_cell_index = _read_numeric(gl, "cell_index")
+        l_cell_loss_index = _read_numeric(gl, "cell_loss_index")
+        l_node_id = _read_strings(gl.variables["node_id"])
+        l_step = _read_numeric(gl, "step")
+        l_deposition = _read_strings(gl.variables["deposition_mode_weights_json"])
+        l_field_mix = _read_strings(gl.variables["field_mix_json"])
+        l_float = {name: _read_numeric(gl, name) for name in LOSS_FLOAT_FIELDS}
 
         losses: list[dict[str, Any]] = []
         for i in range(loss_count):
             row = {
-                "loss_index": int(gl.variables["loss_index"][i]),
-                "cell_index": int(gl.variables["cell_index"][i]),
-                "cell_loss_index": int(gl.variables["cell_loss_index"][i]),
-                "node_id": _read_string(gl.variables["node_id"], i),
-                "step": int(gl.variables["step"][i]),
-                "deposition_mode_weights_json": _read_string(
-                    gl.variables["deposition_mode_weights_json"], i
-                ),
-                "field_mix_json": _read_string(gl.variables["field_mix_json"], i),
+                "loss_index": int(l_loss_index[i]),
+                "cell_index": int(l_cell_index[i]),
+                "cell_loss_index": int(l_cell_loss_index[i]),
+                "node_id": l_node_id[i],
+                "step": int(l_step[i]),
+                "deposition_mode_weights_json": l_deposition[i],
+                "field_mix_json": l_field_mix[i],
             }
             for name in LOSS_FLOAT_FIELDS:
-                row[name] = float(gl.variables[name][i])
+                row[name] = float(l_float[name][i])
             losses.append(row)
 
         flow = json.loads(str(ds.flow_summary_json))
