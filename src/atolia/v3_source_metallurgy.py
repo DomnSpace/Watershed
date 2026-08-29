@@ -1,22 +1,15 @@
 from __future__ import annotations
 
-"""Atolia v3 phase-03 source geochemistry and metallurgy.
+"""Atolia v3 phase-03 conserved source geochemistry and metallurgy.
 
-Phase 03 is downstream of the phase-02 metal genealogy. It does not alter
+Phase 03 is downstream of the phase-02 metal genealogy. It never changes
 circulation, loss strata, batch identities, parent links or object episodes.
+Element masses and Pb-isotope masses are conserved; concentrations and isotope
+ratios are derived views.
 
-Conservation rule:
-- store elemental masses, not wt%;
-- store Pb isotope masses, not isotope ratios;
-- derive concentrations and ratios only as views;
-- a remelt child receives the contribution-scaled inventories of its phase-02
-  parents exactly.
-
-The repository does not yet contain the empirical covariance/source database
-specified in the Step-3 preparation note. Therefore the source model below is
-explicitly marked as a provisional legacy calibration: the v1 source trace/Pb
-ratio means are frozen as means and Pb carrier concentrations are frozen,
-auditable priors. No independent "noise" is added and no covariance is invented.
+The empirical source covariance dataset required by the Step-3 preparation note
+has not been recovered. Current v1 trace/Pb-ratio means and the frozen Pb-carrier
+priors below are therefore explicitly provisional. No covariance is invented.
 """
 
 from dataclasses import dataclass
@@ -37,26 +30,35 @@ ELEMENTS = (
 )
 PB_ISOTOPES = ("Pb204", "Pb206", "Pb207", "Pb208")
 PB_MASS_NUMBERS = {"Pb204": 204.0, "Pb206": 206.0, "Pb207": 207.0, "Pb208": 208.0}
-
 TRACE_TO_ELEMENT = {
-    "Sb_ppm": "Sb",
-    "Ag_ppm": "Ag",
-    "Ni_ppm": "Ni",
-    "Co_ppm": "Co",
-    "Bi_ppm": "Bi",
+    "Sb_ppm": "Sb", "Ag_ppm": "Ag", "Ni_ppm": "Ni",
+    "Co_ppm": "Co", "Bi_ppm": "Bi",
+}
+ELEMENT_ORIGIN_ROLE = {
+    "Cu": "copper_ancestry",
+    "Sn": "unresolved_tin_alloy_pool",
+    "As": "unresolved_process_alloy_pool",
+    "Pb": "source_geochemistry",
+    "Ag": "source_geochemistry",
+    "Fe": "unresolved_process_alloy_pool",
+    "Zn": "unresolved_process_alloy_pool",
+    "Sb": "source_geochemistry",
+    "Ni": "source_geochemistry",
+    "Co": "source_geochemistry",
+    "Bi": "source_geochemistry",
 }
 
-# Frozen values from the v2 fallback prior, generated once with calibration seed
-# 20260830 and committed here so a world build never silently resamples geology.
-# They are *not* presented as measurements.
+# Exact one-time freeze of the old v2 fallback formula
+# exp(N(log(550 ppm), 1)) using _seed64(20260830, source_id,
+# "pb-ppm-fallback"). These are calibration priors, NOT measurements.
 FROZEN_PB_PPM_PRIOR = {
-    "trentino_east": 2435.918,
-    "upper_atesis": 933.918,
-    "veneto_pre_alps": 3942.915,
-    "eastern_alps_external": 688.694,
-    "tyrrhenian_apennine": 2126.849,
-    "ligurian_tuscany": 2842.998,
-    "balkan_import": 1347.832,
+    "trentino_east": 1391.7854136077792,
+    "upper_atesis": 576.7581247473829,
+    "veneto_pre_alps": 185.28250664304846,
+    "eastern_alps_external": 742.3253266005137,
+    "tyrrhenian_apennine": 2494.5894629357144,
+    "ligurian_tuscany": 189.93420245760402,
+    "balkan_import": 407.3355498391141,
 }
 
 
@@ -103,21 +105,17 @@ def source_chemistry_table(world: Any) -> dict[str, SourceChemistry]:
     for source_id, src in sorted(world.sources.items()):
         trace_ppm = {
             TRACE_TO_ELEMENT[k]: max(0.0, float(v))
-            for k, v in src.trace_mean.items()
-            if k in TRACE_TO_ELEMENT
+            for k, v in src.trace_mean.items() if k in TRACE_TO_ELEMENT
         }
         ratios = {
             "Pb206_204": float(src.isotope_mean["Pb206_204"]),
             "Pb207_204": float(src.isotope_mean["Pb207_204"]),
             "Pb208_204": float(src.isotope_mean["Pb208_204"]),
         }
-        pb_ppm = float(FROZEN_PB_PPM_PRIOR.get(source_id, 550.0))
         out[source_id] = SourceChemistry(
-            source_id=str(source_id),
-            label=str(src.label),
-            pb_ppm=pb_ppm,
-            trace_ppm=trace_ppm,
-            pb_ratios=ratios,
+            source_id=str(source_id), label=str(src.label),
+            pb_ppm=float(FROZEN_PB_PPM_PRIOR.get(source_id, 550.0)),
+            trace_ppm=trace_ppm, pb_ratios=ratios,
         )
     return out
 
@@ -125,7 +123,7 @@ def source_chemistry_table(world: Any) -> dict[str, SourceChemistry]:
 def pb_inventory_from_ratios(
     pb_mass_kg: float, ratios: Mapping[str, float]
 ) -> dict[str, float]:
-    """Convert atomic Pb ratios to isotope masses that sum to pb_mass_kg."""
+    """Convert atomic 20xPb/204Pb ratios to conserved isotope masses."""
     total_mass = max(0.0, float(pb_mass_kg))
     if total_mass == 0.0:
         return {name: 0.0 for name in PB_ISOTOPES}
@@ -135,23 +133,17 @@ def pb_inventory_from_ratios(
         "Pb207": max(0.0, float(ratios["Pb207_204"])),
         "Pb208": max(0.0, float(ratios["Pb208_204"])),
     }
-    weighted = {
-        iso: atom_rel[iso] * PB_MASS_NUMBERS[iso] for iso in PB_ISOTOPES
-    }
-    denom = sum(weighted.values())
+    mass_rel = {iso: atom_rel[iso] * PB_MASS_NUMBERS[iso] for iso in PB_ISOTOPES}
+    denom = sum(mass_rel.values())
     if denom <= 0.0:
         raise ValueError("Pb isotope ratios produce zero isotope inventory")
-    return {iso: total_mass * weighted[iso] / denom for iso in PB_ISOTOPES}
+    return {iso: total_mass * mass_rel[iso] / denom for iso in PB_ISOTOPES}
 
 
 def pb_ratios_from_inventory(inventory: Mapping[str, float]) -> dict[str, float]:
-    n204 = max(0.0, float(inventory.get("Pb204", 0.0))) / PB_MASS_NUMBERS["Pb204"]
+    n204 = max(0.0, float(inventory.get("Pb204", 0.0))) / 204.0
     if n204 <= 0.0:
-        return {
-            "Pb206_204": math.nan,
-            "Pb207_204": math.nan,
-            "Pb208_204": math.nan,
-        }
+        return {"Pb206_204": math.nan, "Pb207_204": math.nan, "Pb208_204": math.nan}
     return {
         "Pb206_204": (max(0.0, float(inventory.get("Pb206", 0.0))) / 206.0) / n204,
         "Pb207_204": (max(0.0, float(inventory.get("Pb207", 0.0))) / 207.0) / n204,
@@ -168,17 +160,12 @@ _TIN_AFFINITY = {
 
 
 def _alloy_fractions(
-    object_class: str,
-    date_bc: int,
-    recycle_generation: int,
-    role: str,
-    particle_id: str,
+    object_class: str, date_bc: int, recycle_generation: int,
+    role: str, particle_id: str,
 ) -> dict[str, float]:
-    """Transparent process prior; not a source-provenance model."""
+    """Transparent process prior, deliberately not a provenance model."""
     late = min(1.0, max(0.0, (1800.0 - float(date_bc)) / 800.0))
     affinity = _TIN_AFFINITY.get(str(object_class), .85)
-    # Small deterministic spread avoids every same-class packet being identical
-    # without pretending it is an empirical source covariance.
     jitter = 0.92 + 0.16 * _stable_u01(
         SOURCE_METALLURGY_VERSION, particle_id, recycle_generation, role, "alloy"
     )
@@ -193,14 +180,13 @@ def _source_weighted_packets(
     batch: biography.MetalBatchState,
     sources: Mapping[str, SourceChemistry],
 ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
-    """Return source-derived trace masses, Pb isotope masses and source Pb masses."""
     traces = {element: 0.0 for element in TRACE_TO_ELEMENT.values()}
     pb_inv = {iso: 0.0 for iso in PB_ISOTOPES}
     source_pb: dict[str, float] = {}
     for source_id, source_metal_mass in batch.ancestry_mass_kg.items():
         source = sources.get(source_id)
         if source is None:
-            continue
+            raise KeyError(f"phase-03 source chemistry missing ancestry source {source_id}")
         carrier_mass = max(0.0, float(source_metal_mass))
         pb_mass = carrier_mass * max(0.0, source.pb_ppm) * 1e-6
         source_pb[source_id] = source_pb.get(source_id, 0.0) + pb_mass
@@ -217,23 +203,17 @@ def _new_packet_chemistry(
     batch: biography.MetalBatchState,
     sources: Mapping[str, SourceChemistry],
 ) -> BatchChemistry:
-    """Chemistry for a root/addition batch that has no phase-02 parents."""
     traces, pb_inv, source_pb = _source_weighted_packets(batch, sources)
     fractions = _alloy_fractions(
-        lineage.object_class,
-        batch.date_bc,
-        batch.recycle_generation,
-        batch.role,
-        lineage.particle_id,
+        lineage.object_class, batch.date_bc, batch.recycle_generation,
+        batch.role, lineage.particle_id,
     )
     elements = {name: 0.0 for name in ELEMENTS}
     for element, value in traces.items():
-        if element in elements:
-            elements[element] += float(value)
+        elements[element] += float(value)
     elements["Pb"] = sum(pb_inv.values())
     for element, fraction in fractions.items():
         elements[element] += float(batch.metal_mass_kg) * fraction
-
     non_cu = sum(v for k, v in elements.items() if k != "Cu")
     if non_cu >= batch.metal_mass_kg:
         raise ValueError(
@@ -242,12 +222,9 @@ def _new_packet_chemistry(
         )
     elements["Cu"] = float(batch.metal_mass_kg) - non_cu
     return BatchChemistry(
-        batch_id=batch.batch_id,
-        particle_id=batch.particle_id,
-        metal_mass_kg=float(batch.metal_mass_kg),
-        element_mass_kg=elements,
-        pb_isotope_mass_kg=pb_inv,
-        source_pb_mass_kg=source_pb,
+        batch_id=batch.batch_id, particle_id=batch.particle_id,
+        metal_mass_kg=float(batch.metal_mass_kg), element_mass_kg=elements,
+        pb_isotope_mass_kg=pb_inv, source_pb_mass_kg=source_pb,
     )
 
 
@@ -270,35 +247,26 @@ def _child_chemistry(
         _scaled_add(pb_inv, parent.pb_isotope_mass_kg, scale)
         _scaled_add(source_pb, parent.source_pb_mass_kg, scale)
     return BatchChemistry(
-        batch_id=batch.batch_id,
-        particle_id=batch.particle_id,
-        metal_mass_kg=float(batch.metal_mass_kg),
-        element_mass_kg=elements,
-        pb_isotope_mass_kg=pb_inv,
-        source_pb_mass_kg=source_pb,
+        batch_id=batch.batch_id, particle_id=batch.particle_id,
+        metal_mass_kg=float(batch.metal_mass_kg), element_mass_kg=elements,
+        pb_isotope_mass_kg=pb_inv, source_pb_mass_kg=source_pb,
     )
 
 
-def validate_batch_chemistry(
-    batch: BatchChemistry,
-    *,
-    tolerance: float = 1e-10,
-) -> None:
+def validate_batch_chemistry(batch: BatchChemistry, *, tolerance: float = 1e-10) -> None:
     if batch.metal_mass_kg <= 0.0 or not math.isfinite(batch.metal_mass_kg):
         raise ValueError("chemistry batch mass must be positive and finite")
     if set(batch.element_mass_kg) != set(ELEMENTS):
         raise ValueError("chemistry element basis mismatch")
     if set(batch.pb_isotope_mass_kg) != set(PB_ISOTOPES):
         raise ValueError("Pb isotope basis mismatch")
-    if any((not math.isfinite(float(v))) or float(v) < 0.0 for v in batch.element_mass_kg.values()):
+    if any(not math.isfinite(float(v)) or float(v) < 0.0 for v in batch.element_mass_kg.values()):
         raise ValueError("invalid element mass")
-    if any((not math.isfinite(float(v))) or float(v) < 0.0 for v in batch.pb_isotope_mass_kg.values()):
+    if any(not math.isfinite(float(v)) or float(v) < 0.0 for v in batch.pb_isotope_mass_kg.values()):
         raise ValueError("invalid Pb isotope mass")
     element_sum = sum(float(v) for v in batch.element_mass_kg.values())
     if abs(element_sum - batch.metal_mass_kg) > max(tolerance, batch.metal_mass_kg * 1e-10):
-        raise ValueError(
-            f"element mass does not close for {batch.batch_id}: {element_sum} vs {batch.metal_mass_kg}"
-        )
+        raise ValueError(f"element mass does not close for {batch.batch_id}")
     pb_mass = float(batch.element_mass_kg["Pb"])
     isotope_sum = sum(float(v) for v in batch.pb_isotope_mass_kg.values())
     if abs(pb_mass - isotope_sum) > max(tolerance, max(pb_mass, 1e-12) * 1e-10):
@@ -309,32 +277,30 @@ def validate_batch_chemistry(
 
 
 def materialize_metallurgy_lineage(
-    world: Any,
-    lineage: biography.MetalLineage,
+    world: Any, lineage: biography.MetalLineage,
 ) -> MetallurgyLineage:
     sources = source_chemistry_table(world)
     by_id: dict[str, BatchChemistry] = {}
     rows: list[BatchChemistry] = []
     for batch in lineage.batches:
-        if batch.parent_contributions_kg:
-            chemistry = _child_chemistry(batch, by_id)
-        else:
-            chemistry = _new_packet_chemistry(lineage, batch, sources)
+        chemistry = (
+            _child_chemistry(batch, by_id)
+            if batch.parent_contributions_kg
+            else _new_packet_chemistry(lineage, batch, sources)
+        )
         validate_batch_chemistry(chemistry)
         by_id[batch.batch_id] = chemistry
         rows.append(chemistry)
     if lineage.final_batch_id not in by_id:
         raise ValueError("final phase-02 batch missing from chemistry lineage")
     return MetallurgyLineage(
-        particle_id=lineage.particle_id,
-        batches=tuple(rows),
+        particle_id=lineage.particle_id, batches=tuple(rows),
         final_batch_id=lineage.final_batch_id,
     )
 
 
 def materialize_metallurgy(
-    world: Any,
-    lineages: Sequence[biography.MetalLineage],
+    world: Any, lineages: Sequence[biography.MetalLineage],
 ) -> list[MetallurgyLineage]:
     return [materialize_metallurgy_lineage(world, lineage) for lineage in lineages]
 
@@ -349,22 +315,19 @@ def flatten_metallurgy(
     elements: list[dict[str, Any]] = []
     pb_isotopes: list[dict[str, Any]] = []
     source_pb: list[dict[str, Any]] = []
-    batch_index_by_id: dict[str, int] = {}
 
     for lineage, chem_lineage in zip(lineages, chemistry):
         if lineage.particle_id != chem_lineage.particle_id:
             raise ValueError("particle identity mismatch between phase 02 and phase 03")
-        phase2_ids = [b.batch_id for b in lineage.batches]
-        phase3_ids = [b.batch_id for b in chem_lineage.batches]
-        if phase2_ids != phase3_ids:
+        if [b.batch_id for b in lineage.batches] != [b.batch_id for b in chem_lineage.batches]:
             raise ValueError("batch identity/order mismatch between phase 02 and phase 03")
         for batch in chem_lineage.batches:
             idx = len(batches)
-            batch_index_by_id[batch.batch_id] = idx
             ratios = pb_ratios_from_inventory(batch.pb_isotope_mass_kg)
-            dominant = None
-            if batch.source_pb_mass_kg:
-                dominant = max(batch.source_pb_mass_kg, key=batch.source_pb_mass_kg.get)
+            dominant = (
+                max(batch.source_pb_mass_kg, key=batch.source_pb_mass_kg.get)
+                if batch.source_pb_mass_kg else None
+            )
             batches.append({
                 "chemistry_batch_index": idx,
                 "batch_id": batch.batch_id,
@@ -384,6 +347,7 @@ def flatten_metallurgy(
                     "element_row_index": len(elements),
                     "chemistry_batch_index": idx,
                     "element": element,
+                    "origin_role": ELEMENT_ORIGIN_ROLE[element],
                     "mass_kg": mass,
                     "mass_fraction": mass / float(batch.metal_mass_kg),
                 })
@@ -401,7 +365,7 @@ def flatten_metallurgy(
                     "chemistry_batch_index": idx,
                     "source_id": source_id,
                     "pb_mass_kg": float(mass),
-                    "fraction_of_pb": (float(mass) / pb_total) if pb_total > 0.0 else 0.0,
+                    "fraction_of_pb": float(mass) / pb_total if pb_total > 0.0 else 0.0,
                 })
     return {
         "chemistry_batches": batches,
@@ -412,7 +376,7 @@ def flatten_metallurgy(
 
 
 def source_table_rows(world: Any) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+    rows = []
     for source in source_chemistry_table(world).values():
         row = {
             "source_id": source.source_id,
