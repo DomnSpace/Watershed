@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-"""Build the Atolia v3 phase-01 developer master from the exact v1 propagation spine.
+"""Build Atolia v3 from the exact v1 propagation spine.
 
-This phase is intentionally conservative. It reuses the canonical v1 sequence:
+``build_master`` remains the phase-01 compatibility entry point proven by G2.
+``build_master_with_biography`` appends phase-02 weighted metal biographies to
+that same lossless spine without changing world construction or circulation.
 
-    TemporalFieldArchaeologicalWorld(...)
-    -> world.build(...)
-    -> intensity_circulation.propagate_world(...)
-
-and stores those outputs losslessly in a small NetCDF checkpoint. No v2 direct
-particle simulator, moment reconstruction, metal-biography transplant, or player
-sampling is performed here.
+Phase 02 is downstream bookkeeping: every positive v1 loss stratum becomes one
+weighted representative lineage. It does not reroute archaeological inquiry,
+reselect hidden objects, or run another circulation process.
 """
 
 import argparse
@@ -30,10 +28,13 @@ import archaeology_temporal_world as archaeology
 import campaign_substrate_cache as cache
 import intensity_circulation as intensity
 import release_candidate_invariants as release_invariants
+import v3_biography_netcdf
+import v3_metal_biography
 import v3_netcdf
 
 
 DEFAULT_V3_SPINE_PATH = Path("cache/atolia_master_v3_spine.nc")
+DEFAULT_V3_MASTER_PATH = Path("cache/atolia_master_v3.nc")
 
 
 @dataclass
@@ -107,22 +108,16 @@ def run_v1_propagation_spine(
     )
 
 
-def build_master(
+def _write_phase01(
+    result: V1SpineResult,
     hypothesis: Mapping[str, Any],
     *,
     out_path: Path,
     world_seed: int,
     workshop_count: int,
     intensity_steps: int,
-    target_geography_nodes: int | None = None,
+    target_geography_nodes: int | None,
 ) -> dict[str, Any]:
-    result = run_v1_propagation_spine(
-        hypothesis,
-        world_seed=world_seed,
-        workshop_count=workshop_count,
-        intensity_steps=intensity_steps,
-        target_geography_nodes=target_geography_nodes,
-    )
     summary = v3_netcdf.write_spine_master(
         out_path,
         reports=result.reports,
@@ -139,17 +134,94 @@ def build_master(
         "release_invariants_version": result.release_invariants_version,
         "production_mass_error_kg": result.production_mass_error_kg,
         "propagation_model_version": str(
-            result.flow_summary.get("model_version", intensity.INTENSITY_MODEL_VERSION)
+            result.flow_summary.get(
+                "model_version",
+                intensity.INTENSITY_MODEL_VERSION,
+            )
         ),
     })
     return summary
 
 
+def build_master(
+    hypothesis: Mapping[str, Any],
+    *,
+    out_path: Path,
+    world_seed: int,
+    workshop_count: int,
+    intensity_steps: int,
+    target_geography_nodes: int | None = None,
+) -> dict[str, Any]:
+    """Build only the proven phase-01 lossless propagation checkpoint."""
+    result = run_v1_propagation_spine(
+        hypothesis,
+        world_seed=world_seed,
+        workshop_count=workshop_count,
+        intensity_steps=intensity_steps,
+        target_geography_nodes=target_geography_nodes,
+    )
+    return _write_phase01(
+        result,
+        hypothesis,
+        out_path=out_path,
+        world_seed=world_seed,
+        workshop_count=workshop_count,
+        intensity_steps=intensity_steps,
+        target_geography_nodes=target_geography_nodes,
+    )
+
+
+def build_master_with_biography(
+    hypothesis: Mapping[str, Any],
+    *,
+    out_path: Path,
+    world_seed: int,
+    workshop_count: int,
+    intensity_steps: int,
+    target_geography_nodes: int | None = None,
+) -> dict[str, Any]:
+    """Build phase 01 once, then append phase-02 metal/object biographies."""
+    result = run_v1_propagation_spine(
+        hypothesis,
+        world_seed=world_seed,
+        workshop_count=workshop_count,
+        intensity_steps=intensity_steps,
+        target_geography_nodes=target_geography_nodes,
+    )
+    spine_summary = _write_phase01(
+        result,
+        hypothesis,
+        out_path=out_path,
+        world_seed=world_seed,
+        workshop_count=workshop_count,
+        intensity_steps=intensity_steps,
+        target_geography_nodes=target_geography_nodes,
+    )
+
+    lineages = v3_metal_biography.materialize_loss_lineages(
+        result.world,
+        result.reports,
+        world_seed=world_seed,
+    )
+    biography_summary = v3_biography_netcdf.append_biography(
+        out_path,
+        lineages=lineages,
+        world_seed=world_seed,
+        phase01_spine_sha256=str(spine_summary["spine_sha256"]),
+    )
+
+    return {
+        **spine_summary,
+        "latest_phase": v3_biography_netcdf.V3_BIOGRAPHY_PHASE,
+        "metal_biography": biography_summary,
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
-            "Build the Atolia v3 phase-01 master from the exact v1 "
-            "TemporalFieldArchaeologicalWorld -> intensity.propagate_world spine"
+            "Build the Atolia v3 exact v1 propagation spine and, by default, "
+            "append phase-02 weighted metal biographies."
         )
     )
     ap.add_argument(
@@ -160,7 +232,7 @@ def main() -> None:
     ap.add_argument("--world-seed", type=int, default=cache.DEFAULT_CANONICAL_WORLD_SEED)
     ap.add_argument("--workshops", type=int, default=cache.DEFAULT_WORKSHOPS)
     ap.add_argument("--steps", type=int, default=cache.DEFAULT_STEPS)
-    ap.add_argument("--out", type=Path, default=DEFAULT_V3_SPINE_PATH)
+    ap.add_argument("--out", type=Path, default=DEFAULT_V3_MASTER_PATH)
     ap.add_argument(
         "--target-geography-nodes",
         type=int,
@@ -170,16 +242,23 @@ def main() -> None:
             "v1 geography target."
         ),
     )
+    ap.add_argument(
+        "--spine-only",
+        action="store_true",
+        help="Write the phase-01 checkpoint only; do not append phase-02 biographies.",
+    )
     args = ap.parse_args()
 
     hypothesis = json.loads(args.hypothesis.read_text(encoding="utf-8"))
+    phase_label = "phase 01 spine only" if args.spine_only else "phase 02 metal biography"
     print(
-        "v3 phase 01: building exact v1 propagation spine "
-        f"seed={args.world_seed} workshops={args.workshops} steps={args.steps}",
+        f"v3 {phase_label}: seed={args.world_seed} "
+        f"workshops={args.workshops} steps={args.steps}",
         file=sys.stderr,
         flush=True,
     )
-    summary = build_master(
+    builder = build_master if args.spine_only else build_master_with_biography
+    summary = builder(
         hypothesis,
         out_path=args.out,
         world_seed=args.world_seed,
