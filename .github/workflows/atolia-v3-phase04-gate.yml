@@ -27,6 +27,15 @@ jobs:
       - name: Phase 04 workshop-guild-tool gate
         run: pytest -q tests/test_v3_workshop_ecology.py
 
+      - name: Fast real phase-04 smoke build
+        run: |
+          python src/atolia/v3_smoke.py \
+            --cells 64 \
+            --nodes 12 \
+            --workshops 24 \
+            --steps 2 \
+            --out /tmp/atolia_v3_phase04_smoke.nc
+
       - name: Phase 03 source-metallurgy regression
         run: pytest -q tests/test_v3_source_metallurgy.py
 
