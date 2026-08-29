@@ -13,10 +13,14 @@ if str(ATOLIA) not in sys.path:
     sys.path.insert(0, str(ATOLIA))
 
 import campaign_substrate_cache as substrate_cache
+import ecmwf_acquisition_campaign as ecmwf_campaign
 import release_candidate_invariants as release_invariants
 from player_game_package import build_player_package, write_package
 
 DEFAULT_RUNTIME = ROOT / "cache" / "atolia_runtime_v2.nc"
+SHIPPING_RUNTIME_SCHEMA = "atolia.ecmwf-runtime.v2-metal-lineage"
+LEGACY_RUNTIME_SCHEMA = "atolia.ecmwf-runtime.v1"
+SUPPORTED_RUNTIME_SCHEMAS = frozenset({SHIPPING_RUNTIME_SCHEMA, LEGACY_RUNTIME_SCHEMA})
 ProgressCallback = Callable[[int, str], None]
 
 
@@ -28,6 +32,24 @@ def _rooted(path: str | Path) -> Path:
 def _progress(callback: ProgressCallback | None, percent: int, stage: str) -> None:
     if callback is not None:
         callback(max(0, min(100, int(percent))), str(stage))
+
+
+def _bind_runtime_schema(runtime_path: Path) -> str:
+    """Bind the legacy ECMWF sampler to the schema carried by the frozen runtime.
+
+    The shipped v2 metal-lineage runtime is a strict extension of the v1 profile
+    field used by the player sampler. The sampler still validates every required
+    v1 variable and dimension after this schema gate, so this does not weaken the
+    structural checks; it only stops rejecting the frozen v2 file by name alone.
+    """
+    from netCDF4 import Dataset
+
+    with Dataset(runtime_path, "r") as ds:
+        schema = str(getattr(ds, "schema", ""))
+    if schema not in SUPPORTED_RUNTIME_SCHEMAS:
+        raise ValueError(f"unsupported Atolia ECMWF runtime schema: {schema!r}")
+    ecmwf_campaign.RUNTIME_SCHEMA = schema
+    return schema
 
 
 def generate_player_package(
@@ -69,6 +91,10 @@ def generate_player_package(
     substrate_path = _rooted(substrate)
     hypothesis_path = ROOT / "hypotheses" / "atolia_atesis_1800_1000_v0.json"
 
+    if runtime_path.exists():
+        schema = _bind_runtime_schema(runtime_path)
+        _progress(progress_callback, 18, f"RUNTIME SCHEMA {schema}")
+
     _progress(progress_callback, 20, "BUILDING PLAYER PACKAGE")
     payload = build_player_package(
         player_key=player_key,
@@ -83,6 +109,7 @@ def generate_player_package(
         allow_slow_build=bool(allow_slow_build),
     )
     payload["meta"]["release_invariants"] = release_version
+    payload["meta"]["runtime_schema"] = ecmwf_campaign.RUNTIME_SCHEMA
 
     if output_path is not None:
         _progress(progress_callback, 95, "WRITING PLAYER PACKAGE")
