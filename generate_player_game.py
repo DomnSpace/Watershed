@@ -13,7 +13,6 @@ if str(ATOLIA) not in sys.path:
     sys.path.insert(0, str(ATOLIA))
 
 import campaign_substrate_cache as substrate_cache
-import ecmwf_acquisition_campaign as ecmwf_campaign
 import release_candidate_invariants as release_invariants
 from player_game_package import build_player_package, write_package
 
@@ -21,6 +20,8 @@ DEFAULT_RUNTIME = ROOT / "cache" / "atolia_runtime_v2.nc"
 SHIPPING_RUNTIME_SCHEMA = "atolia.ecmwf-runtime.v2-metal-lineage"
 LEGACY_RUNTIME_SCHEMA = "atolia.ecmwf-runtime.v1"
 SUPPORTED_RUNTIME_SCHEMAS = frozenset({SHIPPING_RUNTIME_SCHEMA, LEGACY_RUNTIME_SCHEMA})
+V2_HYPOTHESIS = ROOT / "hypotheses" / "atolia_v2_2000_1000_structural.json"
+V1_HYPOTHESIS = ROOT / "hypotheses" / "atolia_atesis_1800_1000_v0.json"
 ProgressCallback = Callable[[int, str], None]
 
 
@@ -34,21 +35,13 @@ def _progress(callback: ProgressCallback | None, percent: int, stage: str) -> No
         callback(max(0, min(100, int(percent))), str(stage))
 
 
-def _bind_runtime_schema(runtime_path: Path) -> str:
-    """Bind the legacy ECMWF sampler to the schema carried by the frozen runtime.
-
-    The shipped v2 metal-lineage runtime is a strict extension of the v1 profile
-    field used by the player sampler. The sampler still validates every required
-    v1 variable and dimension after this schema gate, so this does not weaken the
-    structural checks; it only stops rejecting the frozen v2 file by name alone.
-    """
+def _runtime_schema(runtime_path: Path) -> str:
     from netCDF4 import Dataset
 
     with Dataset(runtime_path, "r") as ds:
         schema = str(getattr(ds, "schema", ""))
     if schema not in SUPPORTED_RUNTIME_SCHEMAS:
-        raise ValueError(f"unsupported Atolia ECMWF runtime schema: {schema!r}")
-    ecmwf_campaign.RUNTIME_SCHEMA = schema
+        raise ValueError(f"unsupported Atolia runtime schema: {schema!r}")
     return schema
 
 
@@ -68,15 +61,9 @@ def generate_player_package(
 ) -> dict[str, Any]:
     """Generate one deterministic Dr. Corrosion player package in-process.
 
-    This is the canonical application API as well as the implementation behind
-    the CLI. Callers pass a stable opaque ``player_key`` and, for normal
-    releases, the compact ``cache/atolia_runtime_v2.nc`` substrate. No CLI,
-    subprocess, HTTP or debug layer is required to obtain the 300-object
-    package.
-
-    ``progress_callback`` is deliberately application-facing and coarse. It
-    exposes the public API boundary without changing the simulation itself.
-    Exceptions still propagate unchanged to the caller.
+    The shipping path reads ``cache/atolia_runtime_v2.nc`` directly. The public
+    API remains the implementation behind both CLI and HTTP entry points; no
+    subprocess or alternate browser simulation exists.
     """
     _progress(progress_callback, 0, "PLAYER API START")
     player_key = str(player_key).strip()
@@ -89,10 +76,12 @@ def generate_player_package(
     _progress(progress_callback, 15, "RESOLVING RUNTIME PATHS")
     runtime_path = _rooted(runtime)
     substrate_path = _rooted(substrate)
-    hypothesis_path = ROOT / "hypotheses" / "atolia_atesis_1800_1000_v0.json"
+    schema: str | None = None
+    hypothesis_path = V1_HYPOTHESIS
 
     if runtime_path.exists():
-        schema = _bind_runtime_schema(runtime_path)
+        schema = _runtime_schema(runtime_path)
+        hypothesis_path = V2_HYPOTHESIS if schema == SHIPPING_RUNTIME_SCHEMA else V1_HYPOTHESIS
         _progress(progress_callback, 18, f"RUNTIME SCHEMA {schema}")
 
     _progress(progress_callback, 20, "BUILDING PLAYER PACKAGE")
@@ -109,7 +98,8 @@ def generate_player_package(
         allow_slow_build=bool(allow_slow_build),
     )
     payload["meta"]["release_invariants"] = release_version
-    payload["meta"]["runtime_schema"] = ecmwf_campaign.RUNTIME_SCHEMA
+    if schema is not None:
+        payload["meta"]["runtime_schema"] = schema
 
     if output_path is not None:
         _progress(progress_callback, 95, "WRITING PLAYER PACKAGE")
@@ -120,7 +110,7 @@ def generate_player_package(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate one unique 300-object Dr. Corrosion archaeology career from the compact Atolia ECMWF runtime."
+        description="Generate one unique 300-object Dr. Corrosion archaeology career from the compact Atolia runtime."
     )
     parser.add_argument("player_key", help="Stable opaque key for this player's archaeology career.")
     parser.add_argument("--out", default="out/player_game.json")
@@ -129,7 +119,7 @@ def main() -> None:
     parser.add_argument(
         "--runtime",
         default=str(DEFAULT_RUNTIME),
-        help="Compact shared ECMWF runtime (.nc); normal player/install substrate.",
+        help="Compact shared Atolia runtime (.nc); normal player/install substrate.",
     )
     parser.add_argument(
         "--substrate",
