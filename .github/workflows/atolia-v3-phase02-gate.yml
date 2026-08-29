@@ -25,8 +25,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-atolia.txt pytest
 
-      - name: Phase 02 metal-biography gate
+      - name: Fast phase-02 unit gate
         run: pytest -q tests/test_v3_metal_biography.py
+
+      - name: Fast real phase-02 smoke build
+        run: pytest -q tests/test_v3_phase02_smoke.py
 
       - name: Phase 01 exact spine regression
         run: pytest -q tests/test_v3_v1_spine_equivalence.py
