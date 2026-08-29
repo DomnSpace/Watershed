@@ -1,0 +1,37 @@
+name: Atolia v3 phase-04 gate
+
+on:
+  push:
+    branches:
+      - atolia-v3-04-workshop-guild-tools
+  workflow_dispatch:
+
+jobs:
+  g2-g5:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install focused Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt pytest
+
+      - name: Phase 04 workshop-guild-tool gate
+        run: pytest -q tests/test_v3_workshop_ecology.py
+
+      - name: Phase 03 source-metallurgy regression
+        run: pytest -q tests/test_v3_source_metallurgy.py
+
+      - name: Phase 02 metal-biography regression
+        run: pytest -q tests/test_v3_metal_biography.py
+
+      - name: Phase 01 exact spine regression
+        run: pytest -q tests/test_v3_v1_spine_equivalence.py
