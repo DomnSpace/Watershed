@@ -16,7 +16,6 @@ import v3_source_metallurgy as metallurgy
 
 V3_METALLURGY_SCHEMA = "atolia-v3-source-metallurgy-v1"
 V3_METALLURGY_PHASE = "atolia-v3-03-source-metallurgy"
-
 SOURCE_FLOAT_FIELDS = (
     "pb_ppm", "Pb206_204", "Pb207_204", "Pb208_204",
     "Sb_ppm", "Ag_ppm", "Ni_ppm", "Co_ppm", "Bi_ppm",
@@ -39,10 +38,7 @@ def _plain(value: Any) -> Any:
 
 def stable_json(value: Any) -> str:
     return json.dumps(
-        _plain(value),
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
+        _plain(value), sort_keys=True, separators=(",", ":"), allow_nan=False
     )
 
 
@@ -70,21 +66,14 @@ def _string_var(group: Any, name: str, dim: str, values: Sequence[Any]) -> None:
     var = group.createVariable(name, str, (dim,))
     if values:
         var[:] = np.asarray(
-            ["" if value is None else str(value) for value in values],
-            dtype=object,
+            ["" if value is None else str(value) for value in values], dtype=object
         )
 
 
 def _numeric_var(
-    group: Any,
-    name: str,
-    dtype: str,
-    dim: str,
-    values: Sequence[Any],
+    group: Any, name: str, dtype: str, dim: str, values: Sequence[Any]
 ) -> None:
-    var = group.createVariable(
-        name, dtype, (dim,), zlib=True, complevel=4, shuffle=True
-    )
+    var = group.createVariable(name, dtype, (dim,), zlib=True, complevel=4, shuffle=True)
     if values:
         var[:] = np.asarray(list(values))
 
@@ -134,9 +123,7 @@ def append_metallurgy(
         _string_var(sg, "source_id", "source", [r["source_id"] for r in source_rows])
         _string_var(sg, "label", "source", [r["label"] for r in source_rows])
         _string_var(
-            sg,
-            "calibration_status",
-            "source",
+            sg, "calibration_status", "source",
             [r["calibration_status"] for r in source_rows],
         )
         for name in SOURCE_FLOAT_FIELDS:
@@ -146,10 +133,7 @@ def append_metallurgy(
         b = tables["chemistry_batches"]
         gb = _make_group(gm, "batches", "chemistry_batch", len(b))
         _numeric_var(
-            gb,
-            "chemistry_batch_index",
-            "i8",
-            "chemistry_batch",
+            gb, "chemistry_batch_index", "i8", "chemistry_batch",
             [r["chemistry_batch_index"] for r in b],
         )
         for name in BATCH_FLOAT_FIELDS:
@@ -162,6 +146,7 @@ def append_metallurgy(
         for name in ("element_row_index", "chemistry_batch_index"):
             _numeric_var(ge, name, "i8", "element_row", [r[name] for r in e])
         _string_var(ge, "element", "element_row", [r["element"] for r in e])
+        _string_var(ge, "origin_role", "element_row", [r["origin_role"] for r in e])
         for name in ("mass_kg", "mass_fraction"):
             _numeric_var(ge, name, "f8", "element_row", [r[name] for r in e])
 
@@ -217,8 +202,7 @@ def _read_sources(group: Any) -> list[dict[str, Any]]:
     rows = []
     for i in range(n):
         row = {
-            "source_id": ids[i],
-            "label": labels[i],
+            "source_id": ids[i], "label": labels[i],
             "calibration_status": status[i],
         }
         row.update({name: float(values[i]) for name, values in arrays.items()})
@@ -232,8 +216,7 @@ def _read_batches(group: Any) -> list[dict[str, Any]]:
     arrays = {name: _numeric(group, name) for name in BATCH_FLOAT_FIELDS}
     strings = {
         name: _strings(
-            group.variables[name],
-            none_if_empty=(name == "pb_dominant_source_id"),
+            group.variables[name], none_if_empty=(name == "pb_dominant_source_id")
         )
         for name in ("batch_id", "particle_id", "pb_dominant_source_id", "recipe_status")
     }
@@ -251,6 +234,7 @@ def _read_elements(group: Any) -> list[dict[str, Any]]:
     ri = _numeric(group, "element_row_index")
     bi = _numeric(group, "chemistry_batch_index")
     element = _strings(group.variables["element"])
+    origin = _strings(group.variables["origin_role"])
     mass = _numeric(group, "mass_kg")
     frac = _numeric(group, "mass_fraction")
     return [
@@ -258,6 +242,7 @@ def _read_elements(group: Any) -> list[dict[str, Any]]:
             "element_row_index": int(ri[i]),
             "chemistry_batch_index": int(bi[i]),
             "element": element[i],
+            "origin_role": origin[i],
             "mass_kg": float(mass[i]),
             "mass_fraction": float(frac[i]),
         }
