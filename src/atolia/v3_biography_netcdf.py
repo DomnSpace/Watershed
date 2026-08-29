@@ -133,9 +133,13 @@ def append_biography(
             _numeric_var(gp, name, "f8", "particle", [r[name] for r in p])
         for name in (
             "particle_id",
+            "production_cell_id",
+            "loss_site_id",
             "bundle_id",
             "object_class",
             "loss_node_id",
+            "metal_batch_id",
+            "object_episode_id",
         ):
             _string_var(gp, name, "particle", [r[name] for r in p])
 
@@ -270,7 +274,8 @@ def _read_particles(group: Any) -> list[dict[str, Any]]:
         "cumulative_metal_distance_km", "current_object_distance_km", "source_entropy",
     )}
     strings = {name: _strings(group.variables[name]) for name in (
-        "particle_id", "bundle_id", "object_class", "loss_node_id"
+        "particle_id", "production_cell_id", "loss_site_id", "bundle_id",
+        "object_class", "loss_node_id", "metal_batch_id", "object_episode_id"
     )}
     int_names = {
         "particle_index", "production_cell_index", "cell_loss_index", "date_bc",
