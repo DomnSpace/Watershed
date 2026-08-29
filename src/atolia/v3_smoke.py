@@ -24,6 +24,10 @@ from pathlib import Path
 import sys
 from typing import Any, Mapping, Sequence
 
+# Keep the native dependency visible in the selected entry itself so browser hosts
+# using loadPackagesFromImports() do not have to discover it through local modules.
+import netCDF4  # noqa: F401
+
 
 def _bootstrap_atolia_path() -> Path:
     candidates: list[Path] = []
