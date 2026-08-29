@@ -26,7 +26,10 @@ TARGET_GEOGRAPHY_NODES = 80
 
 
 def _stable_json(value: Mapping[str, Any]) -> str:
-    plain = {str(k): float(v) for k, v in value.items()}
+    plain = {
+        str(k): (v.item() if hasattr(v, "item") else v)
+        for k, v in value.items()
+    }
     return json.dumps(plain, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
@@ -94,16 +97,20 @@ def _run_existing_v1_path(hypothesis):
         target_geography_nodes=TARGET_GEOGRAPHY_NODES,
     )
     world.build(workshop_count=WORKSHOPS)
+    mass_error_kg = float(release_invariants.production_mass_error(world))
     reports, flow = intensity.propagate_world(world, max_steps=STEPS)
-    return reports, flow
+    return reports, flow, mass_error_kg
 
 
 def test_v3_phase01_is_exact_v1_propagation_spine(tmp_path):
     hypothesis_v1 = json.loads(HYPOTHESIS.read_text(encoding="utf-8"))
     hypothesis_v3 = json.loads(HYPOTHESIS.read_text(encoding="utf-8"))
 
-    v1_reports, v1_flow = _run_existing_v1_path(hypothesis_v1)
+    v1_reports, v1_flow, v1_mass_error_kg = _run_existing_v1_path(hypothesis_v1)
     expected_cells, expected_losses = _expected_v1_rows(v1_reports)
+    assert expected_cells
+    assert expected_losses
+    assert any(row["step"] > 0 for row in expected_losses)
 
     out = tmp_path / "atolia_master_v3_spine.nc"
     summary = build_v3_master.build_master(
@@ -123,6 +130,10 @@ def test_v3_phase01_is_exact_v1_propagation_spine(tmp_path):
     assert actual["intensity_steps"] == STEPS
     assert actual["target_geography_nodes"] == TARGET_GEOGRAPHY_NODES
     assert actual["intensity_model_version"] == intensity.INTENSITY_MODEL_VERSION
+    assert actual["production_mass_error_kg"] == v1_mass_error_kg
+    assert actual["hypothesis_sha256"] == build_v3_master.canonical_hypothesis_sha256(
+        hypothesis_v3
+    )
 
     # Gate G2 phase-01 equivalence: every aggregate production/report field and
     # every emitted v1 loss-stratum field must survive the NetCDF round trip.
