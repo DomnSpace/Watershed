@@ -82,7 +82,9 @@ class MetalLineage:
     particle_id: str
     represented_weight: float
     production_cell_index: int
+    production_cell_id: str
     cell_loss_index: int
+    loss_site_id: str
     bundle_id: str
     object_class: str
     date_bc: int
@@ -318,17 +320,29 @@ def materialize_loss_lineage(
 
     mass_kg = float(base.OBJECT_CLASSES[str(cell.object_class)]["mean_kg"])
     total_distance = max(0.0, float(stratum.route_distance_from_origin_km))
+    production_cell_id = _stable_id(
+        "pc",
+        BIOGRAPHY_MODEL_VERSION,
+        cell.bundle_id,
+        cell.bundle_family,
+        cell.object_class,
+        cell.date_bc,
+        cell.origin,
+        cell.destination,
+    )
+    loss_site_id = _stable_id(
+        "ls",
+        production_cell_id,
+        int(cell_loss_index),
+        stratum.node_id,
+        stratum.step,
+    )
     particle_id = _stable_id(
         "p",
         BIOGRAPHY_MODEL_VERSION,
         int(world_seed),
         int(production_cell_index),
-        int(cell_loss_index),
-        cell.bundle_id,
-        cell.object_class,
-        cell.date_bc,
-        stratum.node_id,
-        stratum.step,
+        loss_site_id,
     )
 
     remelt_count = _stochastic_round(
@@ -528,7 +542,9 @@ def materialize_loss_lineage(
         particle_id=particle_id,
         represented_weight=weight,
         production_cell_index=int(production_cell_index),
+        production_cell_id=production_cell_id,
         cell_loss_index=int(cell_loss_index),
+        loss_site_id=loss_site_id,
         bundle_id=str(cell.bundle_id),
         object_class=str(cell.object_class),
         date_bc=int(cell.date_bc),
@@ -676,7 +692,9 @@ def flatten_lineages(
             "particle_id": lineage.particle_id,
             "represented_weight": float(lineage.represented_weight),
             "production_cell_index": int(lineage.production_cell_index),
+            "production_cell_id": lineage.production_cell_id,
             "cell_loss_index": int(lineage.cell_loss_index),
+            "loss_site_id": lineage.loss_site_id,
             "bundle_id": lineage.bundle_id,
             "object_class": lineage.object_class,
             "date_bc": int(lineage.date_bc),
@@ -684,6 +702,8 @@ def flatten_lineages(
             "loss_step": int(lineage.loss_step),
             "final_batch_index": final_batch,
             "final_episode_index": final_episode,
+            "metal_batch_id": lineage.final_batch_id,
+            "object_episode_id": lineage.final_object_episode_id,
             "metal_mass_kg": float(lineage.batches[-1].metal_mass_kg),
             "ore_distance_km": float(lineage.ore_distance_km),
             "cumulative_metal_distance_km": float(
