@@ -185,7 +185,12 @@ def _stochastic_round(expectation: float, *seed_parts: object) -> int:
     whole = int(math.floor(value))
     fraction = value - whole
     count = whole + int(_uniform01(*seed_parts, "round") < fraction)
-    return min(MAX_EVENTS_PER_KIND, count)
+    if count > MAX_EVENTS_PER_KIND:
+        raise ValueError(
+            f"materialized event count {count} exceeds safety bound "
+            f"{MAX_EVENTS_PER_KIND}; refuse to truncate the v1 expectation"
+        )
+    return count
 
 
 def _event_positions(
