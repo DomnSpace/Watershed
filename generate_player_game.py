@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -16,11 +17,17 @@ import release_candidate_invariants as release_invariants
 from player_game_package import build_player_package, write_package
 
 DEFAULT_RUNTIME = ROOT / "cache" / "atolia_runtime_v2.nc"
+ProgressCallback = Callable[[int, str], None]
 
 
 def _rooted(path: str | Path) -> Path:
     value = Path(path)
     return value if value.is_absolute() else ROOT / value
+
+
+def _progress(callback: ProgressCallback | None, percent: int, stage: str) -> None:
+    if callback is not None:
+        callback(max(0, min(100, int(percent))), str(stage))
 
 
 def generate_player_package(
@@ -35,26 +42,37 @@ def generate_player_package(
     allow_slow_build: bool = False,
     generate_validation_catalogue: bool = False,
     include_debug: bool = False,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     """Generate one deterministic Dr. Corrosion player package in-process.
 
     This is the canonical application API as well as the implementation behind
-    the CLI.  Callers pass a stable opaque ``player_key`` and, for normal
-    releases, the compact ``cache/atolia_runtime_v2.nc`` substrate.  No CLI,
+    the CLI. Callers pass a stable opaque ``player_key`` and, for normal
+    releases, the compact ``cache/atolia_runtime_v2.nc`` substrate. No CLI,
     subprocess, HTTP or debug layer is required to obtain the 300-object
     package.
+
+    ``progress_callback`` is deliberately application-facing and coarse. It
+    exposes the public API boundary without changing the simulation itself.
+    Exceptions still propagate unchanged to the caller.
     """
+    _progress(progress_callback, 0, "PLAYER API START")
     player_key = str(player_key).strip()
     if not player_key:
         raise ValueError("player_key is required")
 
+    _progress(progress_callback, 8, "INSTALLING RELEASE INVARIANTS")
     release_version = release_invariants.install()
+
+    _progress(progress_callback, 15, "RESOLVING RUNTIME PATHS")
     runtime_path = _rooted(runtime)
     substrate_path = _rooted(substrate)
+    hypothesis_path = ROOT / "hypotheses" / "atolia_atesis_1800_1000_v0.json"
 
+    _progress(progress_callback, 20, "BUILDING PLAYER PACKAGE")
     payload = build_player_package(
         player_key=player_key,
-        hypothesis_path=ROOT / "hypotheses" / "atolia_atesis_1800_1000_v0.json",
+        hypothesis_path=hypothesis_path,
         workshops=int(workshops),
         catalogue_cap=int(catalogue_cap),
         generate_validation_catalogue=bool(generate_validation_catalogue),
@@ -67,7 +85,9 @@ def generate_player_package(
     payload["meta"]["release_invariants"] = release_version
 
     if output_path is not None:
+        _progress(progress_callback, 95, "WRITING PLAYER PACKAGE")
         write_package(payload, _rooted(output_path))
+    _progress(progress_callback, 100, "PLAYER PACKAGE READY")
     return payload
 
 
