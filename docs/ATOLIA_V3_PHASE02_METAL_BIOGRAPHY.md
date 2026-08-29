@@ -22,10 +22,15 @@ production.
 
 Each lineage receives stable IDs for:
 
+- `production_cell_id`
+- `loss_site_id`
 - `particle_id`
-- metal batches
-- object episodes
+- `metal_batch_id`
+- `object_episode_id`
 - repair/remelt/loss events
+
+The `/particles` table carries those cross-table identities directly as well as
+integer indices for compact joins.
 
 The phase-02 master appends:
 
