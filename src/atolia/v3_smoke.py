@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-"""Fast real integration smoke for Atolia v3 phase 02.
+"""Fast real integration smoke for Atolia v3 through phase 03.
 
-This is deliberately *not* a canonical world product. It builds the real v1 world,
-checks the real release mass invariant, then propagates a deterministic prefix of
-real v1 ProductionCells through the unchanged ``intensity.propagate_cell`` kernel.
-The resulting reports go through the normal phase-01 NetCDF writer and normal
-phase-02 metal-biography append/read format.
+This is deliberately *not* a canonical world product. It builds the real v1
+world, checks the real release mass invariant, then propagates a deterministic
+prefix of real v1 ProductionCells through the unchanged ``propagate_cell``
+kernel. The result uses the normal phase-01 NetCDF writer, normal phase-02
+metal-biography append and normal phase-03 source-metallurgy append/read path.
 
 Use this for the edit/test loop. G2 remains the full equivalence gate.
 
-The file is also a direct Arcade/DVX entry point. Those hosts execute the selected
-source as a synthetic ``<arcade.py>``/entry script, so they do not necessarily add
-``src/atolia`` to ``sys.path``. Bootstrap the mounted project before importing local
-Atolia modules.
+The file is also a direct Arcade/DVX entry point. Those hosts execute the
+selected source as a synthetic entry script, so they do not necessarily add
+``src/atolia`` to ``sys.path``. Bootstrap the mounted project before importing
+local Atolia modules.
 """
 
 import argparse
@@ -24,27 +24,20 @@ from pathlib import Path
 import sys
 from typing import Any, Mapping, Sequence
 
-# Keep the native dependency visible in the selected entry itself so browser hosts
-# using loadPackagesFromImports() do not have to discover it through local modules.
+# Keep the native dependency visible in the selected entry itself so browser
+# hosts using loadPackagesFromImports() discover it without traversing locals.
 import netCDF4  # noqa: F401
 
 
 def _bootstrap_atolia_path() -> Path:
     candidates: list[Path] = []
-
-    # Normal repo execution: cwd is the repository root.
     cwd = Path.cwd()
     candidates.extend((cwd / "src" / "atolia", cwd))
-
-    # Known browser-runtime project mounts. Keeping these explicit is useful for
-    # direct entry execution where __file__ is synthetic (for example <arcade.py>).
     for root in (
         Path("/home/pyodide/arcade_project"),
         Path("/home/pyodide/dvx_project"),
     ):
         candidates.extend((root / "src" / "atolia", root))
-
-    # Also inspect existing import roots in case the host uses a different mount.
     for entry in list(sys.path):
         if not entry:
             continue
@@ -81,6 +74,9 @@ import intensity_circulation as intensity
 import release_candidate_invariants as release_invariants
 import v3_biography_netcdf
 import v3_metal_biography
+import v3_metallurgy_netcdf
+import v3_netcdf
+import v3_source_metallurgy
 
 
 DEFAULT_SMOKE_CELLS = 64
@@ -129,17 +125,16 @@ def _summary_from_reports(
     }
 
 
-def build_smoke_master_with_biography(
+def _build_smoke_phase02_components(
     hypothesis: Mapping[str, Any],
     *,
     out_path: Path,
-    world_seed: int = 1300,
-    workshop_count: int = DEFAULT_SMOKE_WORKSHOPS,
-    intensity_steps: int = DEFAULT_SMOKE_STEPS,
-    target_geography_nodes: int = DEFAULT_SMOKE_GEOGRAPHY_NODES,
-    production_cell_limit: int = DEFAULT_SMOKE_CELLS,
-) -> dict[str, Any]:
-    """Build a small real phase-01 -> phase-02 product for rapid verification."""
+    world_seed: int,
+    workshop_count: int,
+    intensity_steps: int,
+    target_geography_nodes: int,
+    production_cell_limit: int,
+) -> tuple[dict[str, Any], Any, list[v3_metal_biography.MetalLineage]]:
     if production_cell_limit <= 0:
         raise ValueError("production_cell_limit must be positive")
 
@@ -202,7 +197,7 @@ def build_smoke_master_with_biography(
         phase01_spine_sha256=str(spine_summary["spine_sha256"]),
     )
 
-    return {
+    summary = {
         **spine_summary,
         "latest_phase": v3_biography_netcdf.V3_BIOGRAPHY_PHASE,
         "metal_biography": biography_summary,
@@ -212,6 +207,91 @@ def build_smoke_master_with_biography(
             "target_geography_nodes": int(target_geography_nodes),
             "workshops": int(workshop_count),
             "steps": int(intensity_steps),
+        },
+    }
+    return summary, world, lineages
+
+
+def build_smoke_master_with_biography(
+    hypothesis: Mapping[str, Any],
+    *,
+    out_path: Path,
+    world_seed: int = 1300,
+    workshop_count: int = DEFAULT_SMOKE_WORKSHOPS,
+    intensity_steps: int = DEFAULT_SMOKE_STEPS,
+    target_geography_nodes: int = DEFAULT_SMOKE_GEOGRAPHY_NODES,
+    production_cell_limit: int = DEFAULT_SMOKE_CELLS,
+) -> dict[str, Any]:
+    """Backward-compatible real phase-01 -> phase-02 smoke product."""
+    summary, _, _ = _build_smoke_phase02_components(
+        hypothesis,
+        out_path=out_path,
+        world_seed=world_seed,
+        workshop_count=workshop_count,
+        intensity_steps=intensity_steps,
+        target_geography_nodes=target_geography_nodes,
+        production_cell_limit=production_cell_limit,
+    )
+    return summary
+
+
+def build_smoke_master_with_metallurgy(
+    hypothesis: Mapping[str, Any],
+    *,
+    out_path: Path,
+    world_seed: int = 1300,
+    workshop_count: int = DEFAULT_SMOKE_WORKSHOPS,
+    intensity_steps: int = DEFAULT_SMOKE_STEPS,
+    target_geography_nodes: int = DEFAULT_SMOKE_GEOGRAPHY_NODES,
+    production_cell_limit: int = DEFAULT_SMOKE_CELLS,
+) -> dict[str, Any]:
+    """Real phases 01-03 smoke product with full NetCDF roundtrip checks."""
+    summary, world, lineages = _build_smoke_phase02_components(
+        hypothesis,
+        out_path=out_path,
+        world_seed=world_seed,
+        workshop_count=workshop_count,
+        intensity_steps=intensity_steps,
+        target_geography_nodes=target_geography_nodes,
+        production_cell_limit=production_cell_limit,
+    )
+    chemistry = v3_source_metallurgy.materialize_metallurgy(world, lineages)
+    metallurgy_summary = v3_metallurgy_netcdf.append_metallurgy(
+        Path(out_path),
+        world=world,
+        lineages=lineages,
+        chemistry=chemistry,
+        world_seed=int(world_seed),
+        phase01_spine_sha256=str(summary["spine_sha256"]),
+        phase02_biography_sha256=str(summary["metal_biography"]["biography_sha256"]),
+    )
+
+    # Read all three phases back through their normal readers. This keeps the
+    # phone smoke useful as an actual persistence gate rather than write-only UI.
+    spine = v3_netcdf.read_spine_master(Path(out_path))
+    bio = v3_biography_netcdf.read_biography(Path(out_path))
+    metal = v3_metallurgy_netcdf.read_metallurgy(Path(out_path))
+    if spine["spine_sha256"] != metal["phase01_spine_sha256"]:
+        raise RuntimeError("phase-03 smoke spine hash linkage failed")
+    if bio["biography_sha256"] != metal["phase02_biography_sha256"]:
+        raise RuntimeError("phase-03 smoke biography hash linkage failed")
+    phase2_batch_ids = [batch.batch_id for lineage in lineages for batch in lineage.batches]
+    phase3_batch_ids = [row["batch_id"] for row in metal["chemistry_batches"]]
+    if phase2_batch_ids != phase3_batch_ids:
+        raise RuntimeError("phase-03 chemistry batch identities differ from phase 02")
+
+    return {
+        **summary,
+        "latest_phase": v3_metallurgy_netcdf.V3_METALLURGY_PHASE,
+        "source_metallurgy": metallurgy_summary,
+        "roundtrip": {
+            "phase01_spine_hash_equal": True,
+            "phase02_biography_hash_equal": True,
+            "phase03_metallurgy_hash_equal": (
+                metal["metallurgy_sha256"] == metallurgy_summary["metallurgy_sha256"]
+            ),
+            "phase02_phase03_batch_ids_equal": True,
+            "source_calibration_status": metal["source_calibration_status"],
         },
     }
 
@@ -224,18 +304,29 @@ def _resolve_project_path(path: Path) -> Path:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Run the fast real Atolia v3 phase-02 smoke build")
+    ap = argparse.ArgumentParser(
+        description="Run the fast real Atolia v3 phase-03 source-metallurgy smoke build"
+    )
     ap.add_argument(
         "--hypothesis",
         type=Path,
         default=Path("hypotheses/atolia_atesis_1800_1000_v0.json"),
     )
-    ap.add_argument("--out", type=Path, default=Path("cache/atolia_v3_phase02_smoke.nc"))
+    ap.add_argument(
+        "--out",
+        type=Path,
+        default=Path("cache/atolia_v3_phase03_smoke.nc"),
+    )
     ap.add_argument("--world-seed", type=int, default=1300)
     ap.add_argument("--cells", type=int, default=DEFAULT_SMOKE_CELLS)
     ap.add_argument("--nodes", type=int, default=DEFAULT_SMOKE_GEOGRAPHY_NODES)
     ap.add_argument("--workshops", type=int, default=DEFAULT_SMOKE_WORKSHOPS)
     ap.add_argument("--steps", type=int, default=DEFAULT_SMOKE_STEPS)
+    ap.add_argument(
+        "--biography-only",
+        action="store_true",
+        help="Stop after phase 02 for compatibility/debugging.",
+    )
     args = ap.parse_args()
 
     hypothesis_path = _resolve_project_path(args.hypothesis)
@@ -243,7 +334,12 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     hypothesis = json.loads(hypothesis_path.read_text(encoding="utf-8"))
-    summary = build_smoke_master_with_biography(
+    builder = (
+        build_smoke_master_with_biography
+        if args.biography_only
+        else build_smoke_master_with_metallurgy
+    )
+    summary = builder(
         hypothesis,
         out_path=out_path,
         world_seed=args.world_seed,
@@ -254,8 +350,6 @@ def main() -> None:
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
-    # Arcade Terminal exposes emit() in the selected Python entry's globals. Keep
-    # normal CLI behaviour unchanged while giving the phone runner a result card.
     host_emit = globals().get("emit")
     if callable(host_emit):
         host_emit(summary)
