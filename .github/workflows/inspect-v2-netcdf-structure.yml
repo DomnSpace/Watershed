@@ -1,0 +1,154 @@
+name: Inspect v2 NetCDF structure
+
+on:
+  push:
+    branches: [atolia-v2-step4-9-workshop-tools]
+    paths:
+      - '.github/workflows/inspect-v2-netcdf-structure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install NetCDF reader
+        run: python -m pip install netCDF4
+
+      - name: Compare master and runtime structure only
+        run: |
+          mkdir -p netcdf-structure-report
+          python - <<'PY'
+          from __future__ import annotations
+          import json
+          from pathlib import Path
+          from netCDF4 import Dataset
+
+          MASTER = Path('cache/atolia_master_v2.nc')
+          RUNTIME = Path('cache/atolia_runtime_v2.nc')
+
+          SAFE_GLOBAL_ATTRS = {
+              'schema', 'product_kind', 'world_seed', 'workshop_count',
+              'state_count', 'profile_count', 'runtime_profile_count',
+              'production_cell_count', 'master_state_count',
+              'steps', 'step_count', 'particle_count', 'cell_count',
+          }
+
+          def scalar(v):
+              if isinstance(v, bytes):
+                  return v.decode('utf-8', 'replace')
+              if hasattr(v, 'item'):
+                  try: return v.item()
+                  except Exception: pass
+              if isinstance(v, (str, int, float, bool)) or v is None:
+                  return v
+              return str(v)
+
+          def summarize_group(g, path='/'):
+              out = {
+                  'path': path,
+                  'dimensions': {name: len(dim) for name, dim in g.dimensions.items()},
+                  'variables': {},
+                  'groups': {},
+              }
+              for name, var in g.variables.items():
+                  out['variables'][name] = {
+                      'dtype': str(var.dtype),
+                      'dimensions': list(var.dimensions),
+                      'shape': list(var.shape),
+                  }
+              for name, child in g.groups.items():
+                  child_path = (path.rstrip('/') + '/' + name) if path != '/' else '/' + name
+                  out['groups'][name] = summarize_group(child, child_path)
+              return out
+
+          def summarize(path):
+              with Dataset(path, 'r') as ds:
+                  attrs = {}
+                  for name in ds.ncattrs():
+                      if name in SAFE_GLOBAL_ATTRS:
+                          attrs[name] = scalar(ds.getncattr(name))
+                  return {
+                      'file': str(path),
+                      'bytes': path.stat().st_size,
+                      'global_attrs': attrs,
+                      'root': summarize_group(ds),
+                  }
+
+          def flatten_groups(node):
+              groups = {node['path']: node}
+              for child in node['groups'].values():
+                  groups.update(flatten_groups(child))
+              return groups
+
+          master = summarize(MASTER)
+          runtime = summarize(RUNTIME)
+          mg = flatten_groups(master['root'])
+          rg = flatten_groups(runtime['root'])
+
+          all_groups = sorted(set(mg) | set(rg))
+          diff = {
+              'master_only_groups': sorted(set(mg) - set(rg)),
+              'runtime_only_groups': sorted(set(rg) - set(mg)),
+              'groups': {},
+          }
+          for gp in all_groups:
+              if gp not in mg or gp not in rg:
+                  continue
+              mv = mg[gp]['variables']
+              rv = rg[gp]['variables']
+              md = mg[gp]['dimensions']
+              rd = rg[gp]['dimensions']
+              changed = {}
+              for name in sorted(set(mv) & set(rv)):
+                  if mv[name] != rv[name]:
+                      changed[name] = {'master': mv[name], 'runtime': rv[name]}
+              diff['groups'][gp] = {
+                  'master_only_dimensions': sorted(set(md) - set(rd)),
+                  'runtime_only_dimensions': sorted(set(rd) - set(md)),
+                  'changed_dimension_lengths': {
+                      name: {'master': md[name], 'runtime': rd[name]}
+                      for name in sorted(set(md) & set(rd)) if md[name] != rd[name]
+                  },
+                  'master_only_variables': sorted(set(mv) - set(rv)),
+                  'runtime_only_variables': sorted(set(rv) - set(mv)),
+                  'changed_shared_variables': changed,
+                  'shared_variable_count': len(set(mv) & set(rv)),
+              }
+
+          report = {'master': master, 'runtime': runtime, 'diff': diff}
+          out = Path('netcdf-structure-report/v2-master-runtime-structure.json')
+          out.write_text(json.dumps(report, indent=2, sort_keys=True), encoding='utf-8')
+
+          print('MASTER', master['bytes'], master['global_attrs'])
+          print('RUNTIME', runtime['bytes'], runtime['global_attrs'])
+          print('MASTER_ONLY_GROUPS', diff['master_only_groups'])
+          print('RUNTIME_ONLY_GROUPS', diff['runtime_only_groups'])
+          for gp, gd in diff['groups'].items():
+              print('\nGROUP', gp)
+              print('  master-only dims:', gd['master_only_dimensions'])
+              print('  runtime-only dims:', gd['runtime_only_dimensions'])
+              print('  changed dims:', gd['changed_dimension_lengths'])
+              print('  master-only vars:', gd['master_only_variables'])
+              print('  runtime-only vars:', gd['runtime_only_variables'])
+              print('  changed shared vars:', sorted(gd['changed_shared_variables']))
+              print('  shared vars:', gd['shared_variable_count'])
+          PY
+
+      - name: Upload structure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v2-netcdf-structure
+          path: netcdf-structure-report/v2-master-runtime-structure.json
+          retention-days: 7
