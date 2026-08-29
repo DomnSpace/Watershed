@@ -64,6 +64,7 @@ jobs:
           objects = p['objects']
           assert len(objects) == 300, len(objects)
           assert len({o['object_id'] for o in objects}) == 300
+          master = Path('cache/atolia_master_v1.nc')
           runtime = Path('cache/atolia_runtime_v1.nc')
           def sha(path):
               h = hashlib.sha256()
@@ -73,6 +74,8 @@ jobs:
               return h.hexdigest()
           report = {
               'schema': 'atolia.ecmwf-runtime.v1',
+              'master_bytes': master.stat().st_size,
+              'master_sha256': sha(master),
               'runtime_bytes': runtime.stat().st_size,
               'runtime_sha256': sha(runtime),
               'player_objects': len(objects),
@@ -86,23 +89,23 @@ jobs:
           print(json.dumps(report, indent=2))
           PY
 
-      - name: Remove spoiler-heavy intermediate products
+      - name: Remove only transient JSON/player products
         if: always()
         run: |
           rm -f cache/atolia_campaign_substrate_v1.json.gz
-          rm -f cache/atolia_master_v1.nc
           rm -f recovery-report/player-smoke.json
 
-      - name: Upload only private recovered runtime and diagnostics
+      - name: Upload recovered master, runtime and diagnostics
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: atolia-v1-player-runtime-recovery
+          name: atolia-v1-player-master-runtime-recovery
           path: |
+            cache/atolia_master_v1.nc
             cache/atolia_runtime_v1.nc
             recovery-report/runtime-report.json
             recovery-report/01-build-substrate.log
             recovery-report/02-build-runtime.log
             recovery-report/03-player-smoke.log
-          retention-days: 3
+          retention-days: 30
           compression-level: 0
