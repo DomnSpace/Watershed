@@ -10,13 +10,66 @@ The resulting reports go through the normal phase-01 NetCDF writer and normal
 phase-02 metal-biography append/read format.
 
 Use this for the edit/test loop. G2 remains the full equivalence gate.
+
+The file is also a direct Arcade/DVX entry point. Those hosts execute the selected
+source as a synthetic ``<arcade.py>``/entry script, so they do not necessarily add
+``src/atolia`` to ``sys.path``. Bootstrap the mounted project before importing local
+Atolia modules.
 """
 
 import argparse
 from collections import defaultdict
 import json
 from pathlib import Path
+import sys
 from typing import Any, Mapping, Sequence
+
+
+def _bootstrap_atolia_path() -> Path:
+    candidates: list[Path] = []
+
+    # Normal repo execution: cwd is the repository root.
+    cwd = Path.cwd()
+    candidates.extend((cwd / "src" / "atolia", cwd))
+
+    # Known browser-runtime project mounts. Keeping these explicit is useful for
+    # direct entry execution where __file__ is synthetic (for example <arcade.py>).
+    for root in (
+        Path("/home/pyodide/arcade_project"),
+        Path("/home/pyodide/dvx_project"),
+    ):
+        candidates.extend((root / "src" / "atolia", root))
+
+    # Also inspect existing import roots in case the host uses a different mount.
+    for entry in list(sys.path):
+        if not entry:
+            continue
+        try:
+            root = Path(entry)
+        except TypeError:
+            continue
+        candidates.extend((root / "src" / "atolia", root))
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if (candidate / "archaeology_temporal_world.py").is_file():
+            if key not in sys.path:
+                sys.path.insert(0, key)
+            return candidate
+
+    searched = "\n  ".join(sorted(seen))
+    raise ModuleNotFoundError(
+        "Could not locate Watershed src/atolia for the v3 smoke runner. "
+        "Searched:\n  " + searched
+    )
+
+
+ATOLIA_DIR = _bootstrap_atolia_path()
+PROJECT_ROOT = ATOLIA_DIR.parent.parent if ATOLIA_DIR.name == "atolia" else Path.cwd()
 
 import archaeology_temporal_world as archaeology
 import build_v3_master
@@ -159,6 +212,13 @@ def build_smoke_master_with_biography(
     }
 
 
+def _resolve_project_path(path: Path) -> Path:
+    if path.is_absolute() or path.exists():
+        return path
+    candidate = PROJECT_ROOT / path
+    return candidate if candidate.exists() else path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run the fast real Atolia v3 phase-02 smoke build")
     ap.add_argument(
@@ -174,10 +234,14 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=DEFAULT_SMOKE_STEPS)
     args = ap.parse_args()
 
-    hypothesis = json.loads(args.hypothesis.read_text(encoding="utf-8"))
+    hypothesis_path = _resolve_project_path(args.hypothesis)
+    out_path = args.out if args.out.is_absolute() else PROJECT_ROOT / args.out
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    hypothesis = json.loads(hypothesis_path.read_text(encoding="utf-8"))
     summary = build_smoke_master_with_biography(
         hypothesis,
-        out_path=args.out,
+        out_path=out_path,
         world_seed=args.world_seed,
         workshop_count=args.workshops,
         intensity_steps=args.steps,
@@ -185,6 +249,12 @@ def main() -> None:
         production_cell_limit=args.cells,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
+
+    # Arcade Terminal exposes emit() in the selected Python entry's globals. Keep
+    # normal CLI behaviour unchanged while giving the phone runner a result card.
+    host_emit = globals().get("emit")
+    if callable(host_emit):
+        host_emit(summary)
 
 
 if __name__ == "__main__":
