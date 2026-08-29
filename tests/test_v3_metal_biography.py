@@ -139,8 +139,14 @@ def test_same_seed_is_identical_and_different_seed_changes_biography():
 
 
 def test_flattened_indices_are_closed_and_parent_graph_points_backward():
-    tables = metal.flatten_lineages([_lineage()])
+    lineage = _lineage()
+    tables = metal.flatten_lineages([lineage])
     assert len(tables["particles"]) == 1
+    particle = tables["particles"][0]
+    assert particle["production_cell_id"].startswith("pc_")
+    assert particle["loss_site_id"].startswith("ls_")
+    assert particle["metal_batch_id"] == lineage.final_batch_id
+    assert particle["object_episode_id"] == lineage.final_object_episode_id
     batch_count = len(tables["batches"])
     episode_count = len(tables["episodes"])
     for link in tables["parents"]:
