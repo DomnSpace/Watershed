@@ -1,0 +1,108 @@
+name: Recover audited v1 player runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [atolia-v1-player-recovery]
+    paths:
+      - '.github/workflows/recover-v1-player-runtime.yml'
+      - 'src/atolia/**'
+      - 'generate_player_game.py'
+      - 'hypotheses/atolia_atesis_1800_1000_v0.json'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install audited v1 dependencies
+        run: |
+          python -m pip install -r requirements-atolia.txt
+
+      - name: Build canonical v1 latent substrate once
+        run: |
+          mkdir -p cache recovery-report
+          /usr/bin/time -v python src/atolia/build_campaign_substrate.py \
+            --hypothesis hypotheses/atolia_atesis_1800_1000_v0.json \
+            --world-seed 20260824 \
+            --workshops 3200 \
+            --steps 28 \
+            --out cache/atolia_campaign_substrate_v1.json.gz \
+            2>&1 | tee recovery-report/01-build-substrate.log
+
+      - name: Convert v1 substrate to master and compact runtime
+        run: |
+          /usr/bin/time -v python src/atolia/build_ecmwf_substrate.py \
+            --source cache/atolia_campaign_substrate_v1.json.gz \
+            --master cache/atolia_master_v1.nc \
+            --runtime cache/atolia_runtime_v1.nc \
+            --vocabulary cache/atolia_vocabulary_v1.json \
+            2>&1 | tee recovery-report/02-build-runtime.log
+
+      - name: Prove the recovered runtime generates one full career
+        run: |
+          /usr/bin/time -v python generate_player_game.py ci-v1-player-recovery \
+            --runtime cache/atolia_runtime_v1.nc \
+            --out recovery-report/player-smoke.json \
+            2>&1 | tee recovery-report/03-player-smoke.log
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          p = json.loads(Path('recovery-report/player-smoke.json').read_text())
+          objects = p['objects']
+          assert len(objects) == 300, len(objects)
+          assert len({o['object_id'] for o in objects}) == 300
+          runtime = Path('cache/atolia_runtime_v1.nc')
+          def sha(path):
+              h = hashlib.sha256()
+              with path.open('rb') as f:
+                  for block in iter(lambda: f.read(8*1024*1024), b''):
+                      h.update(block)
+              return h.hexdigest()
+          report = {
+              'schema': 'atolia.ecmwf-runtime.v1',
+              'runtime_bytes': runtime.stat().st_size,
+              'runtime_sha256': sha(runtime),
+              'player_objects': len(objects),
+              'unique_object_ids': len({o['object_id'] for o in objects}),
+              'package_id': p['meta']['package_id'],
+              'canonical_world_seed': 20260824,
+              'workshops': 3200,
+              'steps': 28,
+          }
+          Path('recovery-report/runtime-report.json').write_text(json.dumps(report, indent=2))
+          print(json.dumps(report, indent=2))
+          PY
+
+      - name: Remove spoiler-heavy intermediate products
+        if: always()
+        run: |
+          rm -f cache/atolia_campaign_substrate_v1.json.gz
+          rm -f cache/atolia_master_v1.nc
+          rm -f recovery-report/player-smoke.json
+
+      - name: Upload only private recovered runtime and diagnostics
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v1-player-runtime-recovery
+          path: |
+            cache/atolia_runtime_v1.nc
+            recovery-report/runtime-report.json
+            recovery-report/01-build-substrate.log
+            recovery-report/02-build-runtime.log
+            recovery-report/03-player-smoke.log
+          retention-days: 3
+          compression-level: 0
