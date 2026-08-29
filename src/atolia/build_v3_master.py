@@ -8,13 +8,15 @@ Compatibility entry points stay explicit:
 ``build_master``
     phase 01 only: exact proven v1 propagation checkpoint.
 ``build_master_with_biography``
-    phase 01 + phase 02 weighted metal genealogy.
+    phases 01-02: weighted metal genealogy.
 ``build_master_with_metallurgy``
-    phase 01 + phase 02 + phase 03 conserved source/metallurgy state.
+    phases 01-03: conserved source/metallurgy state.
+``build_master_with_workshops``
+    phases 01-04: workshop/guild/tool/operation truth.
 
-Phase 03 never reruns circulation or replaces the phase-02 batch graph. It adds
-material inventories to the existing batches: elemental masses, Pb isotope
-masses and source-resolved Pb carrier mass. Isotope ratios are derived views.
+Every later phase appends to the same file. No phase reruns circulation, replaces
+phase-02 batch identities, reconstructs Gaussian pseudo-objects, or exposes
+player-facing research state.
 """
 
 import argparse
@@ -38,6 +40,8 @@ import v3_metal_biography
 import v3_metallurgy_netcdf
 import v3_netcdf
 import v3_source_metallurgy
+import v3_workshop_ecology
+import v3_workshop_netcdf
 
 
 DEFAULT_V3_SPINE_PATH = Path("cache/atolia_master_v3_spine.nc")
@@ -171,6 +175,31 @@ def _append_phase02(
     return lineages, biography_summary
 
 
+def _append_phase03(
+    result: V1SpineResult,
+    lineages: Sequence[v3_metal_biography.MetalLineage],
+    *,
+    out_path: Path,
+    world_seed: int,
+    spine_summary: Mapping[str, Any],
+    biography_summary: Mapping[str, Any],
+) -> tuple[list[v3_source_metallurgy.MetallurgyLineage], dict[str, Any]]:
+    chemistry = v3_source_metallurgy.materialize_metallurgy(
+        result.world,
+        lineages,
+    )
+    metallurgy_summary = v3_metallurgy_netcdf.append_metallurgy(
+        out_path,
+        world=result.world,
+        lineages=lineages,
+        chemistry=chemistry,
+        world_seed=world_seed,
+        phase01_spine_sha256=str(spine_summary["spine_sha256"]),
+        phase02_biography_sha256=str(biography_summary["biography_sha256"]),
+    )
+    return chemistry, metallurgy_summary
+
+
 def build_master(
     hypothesis: Mapping[str, Any],
     *,
@@ -270,18 +299,13 @@ def build_master_with_metallurgy(
         world_seed=world_seed,
         spine_summary=spine_summary,
     )
-    chemistry = v3_source_metallurgy.materialize_metallurgy(
-        result.world,
+    _, metallurgy_summary = _append_phase03(
+        result,
         lineages,
-    )
-    metallurgy_summary = v3_metallurgy_netcdf.append_metallurgy(
-        out_path,
-        world=result.world,
-        lineages=lineages,
-        chemistry=chemistry,
+        out_path=out_path,
         world_seed=world_seed,
-        phase01_spine_sha256=str(spine_summary["spine_sha256"]),
-        phase02_biography_sha256=str(biography_summary["biography_sha256"]),
+        spine_summary=spine_summary,
+        biography_summary=biography_summary,
     )
     return {
         **spine_summary,
@@ -291,11 +315,74 @@ def build_master_with_metallurgy(
     }
 
 
+def build_master_with_workshops(
+    hypothesis: Mapping[str, Any],
+    *,
+    out_path: Path,
+    world_seed: int,
+    workshop_count: int,
+    intensity_steps: int,
+    target_geography_nodes: int | None = None,
+) -> dict[str, Any]:
+    """Build phases 01-04 once and append workshop/guild/tool operation truth."""
+    result = run_v1_propagation_spine(
+        hypothesis,
+        world_seed=world_seed,
+        workshop_count=workshop_count,
+        intensity_steps=intensity_steps,
+        target_geography_nodes=target_geography_nodes,
+    )
+    spine_summary = _write_phase01(
+        result,
+        hypothesis,
+        out_path=out_path,
+        world_seed=world_seed,
+        workshop_count=workshop_count,
+        intensity_steps=intensity_steps,
+        target_geography_nodes=target_geography_nodes,
+    )
+    lineages, biography_summary = _append_phase02(
+        result,
+        out_path=out_path,
+        world_seed=world_seed,
+        spine_summary=spine_summary,
+    )
+    chemistry, metallurgy_summary = _append_phase03(
+        result,
+        lineages,
+        out_path=out_path,
+        world_seed=world_seed,
+        spine_summary=spine_summary,
+        biography_summary=biography_summary,
+    )
+    workshop_layer = v3_workshop_ecology.materialize_workshop_layer(
+        result.world,
+        lineages,
+        chemistry,
+        world_seed=world_seed,
+    )
+    workshop_summary = v3_workshop_netcdf.append_workshop_layer(
+        out_path,
+        layer=workshop_layer,
+        world_seed=world_seed,
+        phase01_spine_sha256=str(spine_summary["spine_sha256"]),
+        phase02_biography_sha256=str(biography_summary["biography_sha256"]),
+        phase03_metallurgy_sha256=str(metallurgy_summary["metallurgy_sha256"]),
+    )
+    return {
+        **spine_summary,
+        "latest_phase": v3_workshop_netcdf.V3_WORKSHOP_PHASE,
+        "metal_biography": biography_summary,
+        "source_metallurgy": metallurgy_summary,
+        "workshop_ecology": workshop_summary,
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
             "Build the Atolia v3 exact v1 propagation spine and, by default, "
-            "append phase-02 genealogy plus phase-03 source metallurgy."
+            "append phases 02-04 through workshop/guild/tool truth."
         )
     )
     ap.add_argument(
@@ -325,7 +412,12 @@ def main() -> None:
     phase_group.add_argument(
         "--biography-only",
         action="store_true",
-        help="Write phases 01-02 but do not append phase-03 metallurgy.",
+        help="Write phases 01-02 only.",
+    )
+    phase_group.add_argument(
+        "--metallurgy-only",
+        action="store_true",
+        help="Write phases 01-03 but do not append phase-04 workshop truth.",
     )
     args = ap.parse_args()
 
@@ -336,9 +428,12 @@ def main() -> None:
     elif args.biography_only:
         phase_label = "phase 02 metal biography"
         builder = build_master_with_biography
-    else:
+    elif args.metallurgy_only:
         phase_label = "phase 03 source metallurgy"
         builder = build_master_with_metallurgy
+    else:
+        phase_label = "phase 04 workshop guild tools"
+        builder = build_master_with_workshops
 
     print(
         f"v3 {phase_label}: seed={args.world_seed} "
