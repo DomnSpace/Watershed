@@ -25,8 +25,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-atolia.txt pytest
 
-      - name: Phase 01 exact spine regression
-        run: pytest -q tests/test_v3_v1_spine_equivalence.py
-
       - name: Phase 02 metal-biography gate
         run: pytest -q tests/test_v3_metal_biography.py
+
+      - name: Phase 01 exact spine regression
+        run: pytest -q tests/test_v3_v1_spine_equivalence.py
