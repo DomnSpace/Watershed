@@ -19,10 +19,11 @@ import campaign_substrate_cache as substrate_cache
 import ecmwf_acquisition_campaign as ecmwf_campaign
 import procedural_sampler as procedural
 
-PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v7"
-GENERATOR_VERSION = "archaeometallurgy-poari-v7-ecmwf-runtime"
+PACKAGE_SCHEMA = "dr-corrosion.archaeometallurgy.player-package.v8"
+GENERATOR_VERSION = "archaeometallurgy-poari-v8-v2-metal-lineage-runtime"
 DEFAULT_HYPOTHESIS = Path("hypotheses/atolia_atesis_1800_1000_v0.json")
 DEFAULT_RUNTIME = ecmwf_campaign.DEFAULT_RUNTIME
+V2_RUNTIME_SCHEMA = "atolia.ecmwf-runtime.v2-metal-lineage"
 
 
 def seed_from_player_key(player_key: str, namespace: str = "dr-corrosion-archaeometallurgy-v1") -> int:
@@ -50,17 +51,17 @@ def _player_seeds(player_key: str, canonical_world_seed: int) -> procedural.Seed
     )
 
 
-def _runtime_world_metadata(runtime_path: Path) -> tuple[int, int]:
-    """Read only canonical world seed/workshop count from the compact runtime."""
+def _runtime_world_metadata(runtime_path: Path) -> tuple[int, int, str]:
+    """Read canonical world metadata without deserializing the latent field."""
     from netCDF4 import Dataset
 
     with Dataset(runtime_path, "r") as ds:
         schema = str(getattr(ds, "schema", ""))
-        if schema != ecmwf_campaign.RUNTIME_SCHEMA:
-            raise ValueError(f"not an Atolia ECMWF runtime: schema={schema!r}")
+        if schema not in {ecmwf_campaign.RUNTIME_SCHEMA, V2_RUNTIME_SCHEMA}:
+            raise ValueError(f"not a supported Atolia runtime: schema={schema!r}")
         world_seed = int(getattr(ds, "world_seed", substrate_cache.DEFAULT_CANONICAL_WORLD_SEED))
         workshop_count = int(getattr(ds, "workshop_count", substrate_cache.DEFAULT_WORKSHOPS))
-    return world_seed, workshop_count
+    return world_seed, workshop_count, schema
 
 
 def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYPOTHESIS,
@@ -72,25 +73,29 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
                          substrate_path: Path = substrate_cache.DEFAULT_CACHE_PATH,
                          allow_legacy_json_cache: bool = False,
                          allow_slow_build: bool = False) -> Dict[str, Any]:
-    """Generate one 300-find career from the compact shared ECMWF runtime.
+    """Generate one deterministic 300-find career from a compact Atolia runtime.
 
-    Normal player generation opens ``atolia_runtime_v1.nc`` and keeps the latent
-    profile field in NetCDF/NumPy form.  It does not deserialize the giant JSON
-    loss substrate and does not rerun propagation.
-
-    ``allow_legacy_json_cache`` is an explicit developer compatibility path for an
-    existing v1 gzip JSON cache. ``allow_slow_build`` remains the expensive
-    developer-only last resort and writes that legacy cache; it is never the
-    shipping path.
+    The shipping v2 path reads weighted metal-lineage profiles directly from the
+    grouped NetCDF product.  Exact terminal ``/states`` rows are not required and
+    propagation is never rerun.  The v1 flat ECMWF and explicit developer legacy
+    paths remain available for reproducibility.
     """
     hypothesis = json.loads(hypothesis_path.read_text(encoding="utf-8"))
     runtime_path = Path(runtime_path)
     substrate_path = Path(substrate_path)
     substrate = None
+    runtime_schema: str | None = None
 
     if runtime_path.exists():
-        canonical_world_seed, workshops = _runtime_world_metadata(runtime_path)
-        substrate_source = "ecmwf_netcdf_runtime"
+        canonical_world_seed, workshops, runtime_schema = _runtime_world_metadata(runtime_path)
+        if runtime_schema == V2_RUNTIME_SCHEMA:
+            # Installs the v2 2000--1000 BCE object chronology before the shared
+            # structural world is built. No simulation is rerun here.
+            import v2_config
+            v2_config.install_v2_object_chronology()
+            substrate_source = "v2_metal_lineage_netcdf_runtime"
+        else:
+            substrate_source = "ecmwf_netcdf_runtime"
     elif allow_legacy_json_cache and substrate_path.exists():
         substrate = substrate_cache.load_payload(substrate_path)
         substrate_cache.validate_payload(substrate, hypothesis)
@@ -100,9 +105,8 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
     else:
         if not allow_slow_build:
             raise FileNotFoundError(
-                f"Compact ECMWF runtime not found: {runtime_path}. "
-                "Build it from an existing master with `python src/atolia/build_runtime_from_master.py`. "
-                "Developer compatibility may explicitly use --allow-legacy-json-cache if the old gzip cache exists."
+                f"Compact Atolia runtime not found: {runtime_path}. "
+                "Developer compatibility may explicitly use --allow-legacy-json-cache."
             )
         canonical_world_seed = substrate_cache.DEFAULT_CANONICAL_WORLD_SEED
         substrate_source = "slow_build_legacy_cache"
@@ -118,11 +122,19 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
         validation_generation = world.generate_archaeological_catalogue(max_materialized=catalogue_cap)
 
     if runtime_path.exists():
-        sampler = ecmwf_campaign.ECMWFAcquisitionCampaignSampler(
-            world,
-            seeds,
-            runtime_path=runtime_path,
-        )
+        if runtime_schema == V2_RUNTIME_SCHEMA:
+            import v2_runtime_acquisition as v2_campaign
+            sampler = v2_campaign.V2AcquisitionCampaignSampler(
+                world,
+                seeds,
+                runtime_path=runtime_path,
+            )
+        else:
+            sampler = ecmwf_campaign.ECMWFAcquisitionCampaignSampler(
+                world,
+                seeds,
+                runtime_path=runtime_path,
+            )
         sampler.prepare_candidates()
         substrate_fingerprint = sampler.runtime_fingerprint
     elif substrate is not None:
@@ -171,11 +183,18 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
                 "physical_artifact_truth": True,
                 "tool_specific_measurement_error": True,
                 "career_crystallization": campaign.ACQUISITION_VERSION,
-                "career_source": "shared latent loss/intensity field",
+                "career_source": (
+                    "shared weighted metal-lineage profile field"
+                    if substrate_source == "v2_metal_lineage_netcdf_runtime"
+                    else "shared latent loss/intensity field"
+                ),
                 "campaign_substrate_source": substrate_source,
                 "campaign_substrate_fingerprint": substrate_fingerprint,
+                "runtime_schema": runtime_schema,
                 "runtime_materialization": (
-                    "selected profile only" if substrate_source == "ecmwf_netcdf_runtime" else "legacy"
+                    "selected weighted v2 profile only"
+                    if substrate_source == "v2_metal_lineage_netcdf_runtime"
+                    else ("selected profile only" if substrate_source == "ecmwf_netcdf_runtime" else "legacy")
                 ),
                 "validation_catalogue_used_for_selection": False,
             },
@@ -194,9 +213,10 @@ def build_player_package(*, player_key: str, hypothesis_path: Path = DEFAULT_HYP
                 "source": substrate_source,
                 "fingerprint": substrate_fingerprint,
             }
-            if substrate_source == "ecmwf_netcdf_runtime":
+            if substrate_source in {"ecmwf_netcdf_runtime", "v2_metal_lineage_netcdf_runtime"}:
                 debug_substrate.update({
                     "runtime_path": str(runtime_path),
+                    "runtime_schema": runtime_schema,
                     "runtime_profiles": int(sampler.runtime_store.profile_count),
                     "production_cells": int(sampler.runtime_store.cell_count),
                     "python_loss_strata_at_prepare": len(sampler.loss_strata),
@@ -237,7 +257,7 @@ def write_package(payload: Dict[str, Any], out_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate one reproducible 300-object archaeology career from the compact shared ECMWF runtime."
+        description="Generate one reproducible 300-object archaeology career from a compact Atolia runtime."
     )
     parser.add_argument("player_key", help="Opaque player/account/save key. Same key + generator version => same career.")
     parser.add_argument("--hypothesis", default=str(DEFAULT_HYPOTHESIS))
@@ -245,7 +265,7 @@ def main() -> None:
     parser.add_argument("--workshops", type=int, default=substrate_cache.DEFAULT_WORKSHOPS,
                         help="Developer fallback only; normal runtime runs use the runtime's workshop count")
     parser.add_argument("--runtime", default=str(DEFAULT_RUNTIME),
-                        help="Compact shared ECMWF runtime (.nc); normal shipping substrate")
+                        help="Compact shared Atolia runtime (.nc); normal shipping substrate")
     parser.add_argument("--substrate", default=str(substrate_cache.DEFAULT_CACHE_PATH),
                         help="Legacy developer gzip JSON substrate; ignored unless explicitly allowed")
     parser.add_argument("--allow-legacy-json-cache", action="store_true",
