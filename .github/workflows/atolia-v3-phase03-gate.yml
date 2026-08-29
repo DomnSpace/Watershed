@@ -1,0 +1,38 @@
+name: Atolia v3 phase-03 gate
+
+on:
+  push:
+    branches:
+      - atolia-v3-03-source-metallurgy
+  workflow_dispatch:
+
+jobs:
+  g2-g4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install focused Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt pytest
+
+      - name: Phase 03 source-metallurgy gate
+        run: pytest -q tests/test_v3_source_metallurgy.py
+
+      - name: Fast real phase-03 smoke build
+        run: pytest -q tests/test_v3_phase03_smoke.py
+
+      - name: Phase 02 metal-biography regression
+        run: pytest -q tests/test_v3_metal_biography.py
+
+      - name: Phase 01 exact spine regression
+        run: pytest -q tests/test_v3_v1_spine_equivalence.py
