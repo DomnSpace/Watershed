@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,13 +12,15 @@ ATOLIA = ROOT / "src" / "atolia"
 if str(ATOLIA) not in sys.path:
     sys.path.insert(0, str(ATOLIA))
 
-from player_game_package import GENERATOR_VERSION, build_player_package, package_id, write_package
+from generate_player_game import DEFAULT_RUNTIME, generate_player_package
+from player_game_package import GENERATOR_VERSION, package_id
 
 
 class GameHandler(BaseHTTPRequestHandler):
     cache_dir: Path = ROOT / "out" / "player_cache"
     workshops: int = 3200
     catalogue_cap: int = 30000
+    runtime_path: Path = DEFAULT_RUNTIME
 
     def _json(self, status: int, payload: object) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -33,7 +34,11 @@ class GameHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/health":
-            self._json(200, {"ok": True, "generator_version": GENERATOR_VERSION})
+            self._json(200, {
+                "ok": True,
+                "generator_version": GENERATOR_VERSION,
+                "runtime": self.runtime_path.name,
+            })
             return
         if parsed.path != "/game":
             self._json(404, {"error": "not_found"})
@@ -52,14 +57,14 @@ class GameHandler(BaseHTTPRequestHandler):
         if cache_path.exists():
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
         else:
-            payload = build_player_package(
-                player_key=player_key,
-                hypothesis_path=ROOT / "hypotheses" / "atolia_atesis_1800_1000_v0.json",
+            payload = generate_player_package(
+                player_key,
+                output_path=cache_path,
                 workshops=self.workshops,
                 catalogue_cap=self.catalogue_cap,
+                runtime=self.runtime_path,
                 include_debug=False,
             )
-            write_package(payload, cache_path)
         self._json(200, payload)
 
     def log_message(self, fmt: str, *args: object) -> None:
@@ -74,11 +79,22 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--workshops", type=int, default=3200)
     parser.add_argument("--catalogue-cap", type=int, default=30000)
+    parser.add_argument(
+        "--runtime",
+        type=Path,
+        default=DEFAULT_RUNTIME,
+        help="Compact player runtime; defaults to cache/atolia_runtime_v2.nc.",
+    )
     args = parser.parse_args()
     GameHandler.workshops = args.workshops
     GameHandler.catalogue_cap = args.catalogue_cap
+    GameHandler.runtime_path = args.runtime if args.runtime.is_absolute() else ROOT / args.runtime
     server = ThreadingHTTPServer((args.host, args.port), GameHandler)
-    print(json.dumps({"listen": f"http://{args.host}:{args.port}", "generator_version": GENERATOR_VERSION}))
+    print(json.dumps({
+        "listen": f"http://{args.host}:{args.port}",
+        "generator_version": GENERATOR_VERSION,
+        "runtime": str(GameHandler.runtime_path),
+    }))
     server.serve_forever()
 
 
