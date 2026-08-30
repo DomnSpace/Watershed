@@ -3,11 +3,11 @@ from __future__ import annotations
 
 """Build the Atolia v3 phase-07 canonical full world as bounded NetCDF shards.
 
-This stage adds no new hidden-world mechanism.  It executes the existing v1
+This stage adds no new hidden-world mechanism. It executes the existing v1
 propagation and phases 02--05 for every production cell while keeping peak memory
 bounded by one contiguous production-cell shard.
 
-Scientific identity is independent of storage chunk size.  Phase-02 particle IDs
+Scientific identity is independent of storage chunk size. Phase-02 particle IDs
 use global production-cell indices, and the canonical manifest globally merges
 shared deposition pools and tool-use summaries that are only partial inside an
 individual shard.
@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import netCDF4  # noqa: F401
 from netCDF4 import Dataset
@@ -174,6 +174,17 @@ def _flow_summary(reports: Sequence[Any], population_cells: int) -> dict[str, An
     }
 
 
+def _canonical_flow(flow: Mapping[str, Any]) -> dict[str, Any]:
+    """Resume-stable per-shard flow projection used by the manifest only.
+
+    Full precision remains stored in each phase-01 shard. The manifest uses the
+    same 10-significant-digit projection on both fresh and resumed passes so
+    re-summing shard totals cannot change solely because one pass came from RAM
+    and the other from canonical marker JSON.
+    """
+    return json.loads(manifest.stable_json(flow))
+
+
 def _lineages_with_global_indices(
     world: Any,
     reports: Sequence[Any],
@@ -257,6 +268,7 @@ def _write_chunk_marker(
     record: Mapping[str, Any],
     flow_summary: Mapping[str, Any],
 ) -> None:
+    canonical_flow = _canonical_flow(flow_summary)
     with Dataset(path, "a") as ds:
         if "canonical_chunk" in ds.groups:
             raise RuntimeError("canonical chunk marker already exists")
@@ -268,12 +280,13 @@ def _write_chunk_marker(
         group.global_cell_stop = int(record["global_cell_stop"])
         group.cell_count = int(record["cell_count"])
         group.record_json = manifest.stable_json({k: v for k, v in record.items() if not k.startswith("_")})
-        group.flow_summary_json = manifest.stable_json(flow_summary)
+        group.flow_summary_json = json.dumps(canonical_flow, sort_keys=True, separators=(",", ":"), allow_nan=False)
         group.pool_scope = "shard-partial; canonical aggregate stored in phase07 manifest"
         group.tool_use_scope = "shard-partial; canonical aggregate stored in phase07 manifest"
         ds.phase07_world_build_id = str(record["world_build_id"])
         ds.phase07_chunk_sha256 = str(record["chunk_sha256"])
         ds.phase07_chunk_ordinal = int(record["chunk_ordinal"])
+        ds.latest_phase = manifest.V3_PHASE07_PHASE
 
 
 def _read_existing_shard(
@@ -422,7 +435,7 @@ def _build_shard(
     _write_chunk_marker(out_path, record=record, flow_summary=flow)
     read04 = v3_workshop_netcdf.read_workshop_layer(out_path)
     read05 = v3_phase05_netcdf.read_phase05(out_path)
-    record["_flow_summary"] = flow
+    record["_flow_summary"] = _canonical_flow(flow)
     record["_static_workshop_signature"] = _static_workshop_signature(read04)
     record["_hydro_signature"] = _hydro_signature(read05)
     return record, read04, read05
