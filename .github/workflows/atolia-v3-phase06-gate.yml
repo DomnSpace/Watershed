@@ -27,16 +27,16 @@ jobs:
       - name: Phase 06 stratification unit gate
         run: pytest -q tests/test_v3_medium_stratified.py
 
-      - name: Fast integrated phase-06 cohort
+      - name: Medium stratified phase-06 preservation gate
         run: |
           python src/atolia/v3_phase06_medium.py \
-            --cells 256 \
-            --probe-cells 96 \
-            --chunk-cells 64 \
+            --cells 2048 \
+            --probe-cells 384 \
+            --chunk-cells 256 \
             --nodes 12 \
             --workshops 320 \
             --steps 2 \
-            --out /tmp/atolia_v3_phase06_fast.nc
+            --out /tmp/atolia_v3_phase06_medium.nc
 
       - name: Phase 05 hydro-exchange-deposition regression
         run: pytest -q tests/test_v3_hydro_exchange_deposition.py
