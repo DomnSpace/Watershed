@@ -13,6 +13,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import time
 from typing import Any, Mapping
 
 import netCDF4  # noqa: F401
@@ -27,6 +28,19 @@ import intensity_circulation as intensity
 import release_candidate_invariants as release_invariants
 import v3_phase07_canonical as canonical
 import v3_phase07_manifest as manifest
+
+
+def _stage(message: str, started: float | None = None) -> float:
+    now = time.perf_counter()
+    if started is None:
+        print(f"phase07 worker: {message}", file=sys.stderr, flush=True)
+    else:
+        print(
+            f"phase07 worker: {message} in {now - started:.3f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+    return now
 
 
 def build_one_shard(
@@ -47,20 +61,31 @@ def build_one_shard(
     if start < 0 or stop <= start:
         raise ValueError("invalid phase-07 shard interval")
 
+    worker_started = _stage(
+        f"start cells {start}:{stop}; seed={world_seed}; workshops={workshops}; "
+        f"steps={steps}; nodes={nodes}"
+    )
     release_version = release_invariants.install()
     world = canonical.archaeology.TemporalFieldArchaeologicalWorld(
         hypothesis,
         seed=int(world_seed),
         target_geography_nodes=int(nodes),
     )
+    world_started = _stage("building canonical static world")
     world.build(workshop_count=int(workshops))
+    world_finished = _stage("canonical static world built", world_started)
+
     mass_error = float(release_invariants.production_mass_error(world))
     tolerance = build_v3_master._production_mass_tolerance_kg(world)
     if abs(mass_error) > tolerance:
         raise RuntimeError("phase-07 durable shard production mass invariant failed")
 
+    cells_started = _stage("enumerating canonical production cells")
     all_cells = intensity.production_cells(world)
     population = len(all_cells)
+    cells_finished = _stage(
+        f"production cells enumerated ({population})", cells_started
+    )
     if expected_population is not None and population != int(expected_population):
         raise RuntimeError(
             f"phase-07 population changed: expected {expected_population}, got {population}"
@@ -96,6 +121,9 @@ def build_one_shard(
     if path.exists():
         path.unlink()
 
+    materialize_started = _stage(
+        f"materializing phases 01-05 for {stop - start} canonical cells"
+    )
     record, _read04, _read05 = canonical._build_shard(
         world,
         all_cells,
@@ -106,6 +134,11 @@ def build_one_shard(
         release_version=str(release_version),
         production_mass_error_kg=mass_error,
     )
+    materialize_finished = _stage(
+        "canonical shard materialized", materialize_started
+    )
+
+    validate_started = _stage("validating immutable shard roundtrip")
     checked, _, _ = canonical._read_existing_shard(
         path,
         expected_world_build_id=build_id,
@@ -115,8 +148,10 @@ def build_one_shard(
     )
     if checked["chunk_sha256"] != record["chunk_sha256"]:
         raise RuntimeError("phase-07 durable shard roundtrip hash mismatch")
+    validate_finished = _stage("immutable shard validated", validate_started)
 
     public_record = {k: v for k, v in record.items() if not k.startswith("_")}
+    completed = time.perf_counter()
     summary = {
         "phase": manifest.V3_PHASE07_PHASE,
         "product_scope": config["product_scope"],
@@ -128,9 +163,20 @@ def build_one_shard(
         "bytes": int(path.stat().st_size),
         "release_invariants_version": str(release_version),
         "production_mass_error_kg": mass_error,
+        "timing_seconds": {
+            "world_build": float(world_finished - world_started),
+            "production_cells": float(cells_finished - cells_started),
+            "materialize_phases_01_05": float(materialize_finished - materialize_started),
+            "roundtrip_validation": float(validate_finished - validate_started),
+            "total": float(completed - worker_started),
+        },
     }
     (out_dir / f"{name}.json").write_text(
         json.dumps(summary, sort_keys=True, indent=2), encoding="utf-8"
+    )
+    _stage(
+        f"complete cells {start}:{stop}; {path.stat().st_size} bytes",
+        worker_started,
     )
     return summary
 
