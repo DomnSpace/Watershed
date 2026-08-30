@@ -36,6 +36,9 @@ jobs:
             --steps 2 \
             --out /tmp/atolia_v3_phase04_smoke.nc
 
+      - name: Cross-runtime phase-04 diagnostics
+        run: python src/atolia/v3_phase04_diag.py --path /tmp/atolia_v3_phase04_smoke.nc
+
       - name: Phase 03 source-metallurgy regression
         run: pytest -q tests/test_v3_source_metallurgy.py
 
