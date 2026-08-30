@@ -25,7 +25,7 @@ jobs:
           python -m pip install -r requirements-atolia.txt pytest
 
       - name: Phase 07 canonical shard unit and resume gate
-        run: pytest -q tests/test_v3_phase07_canonical.py
+        run: pytest -q tests/test_v3_phase07_canonical.py tests/test_v3_phase07_durable.py
 
       - name: Direct phase-07 three-shard verification prefix
         run: |
@@ -56,11 +56,40 @@ jobs:
       - name: Phase 01 exact spine regression
         run: pytest -q tests/test_v3_v1_spine_equivalence.py
 
-  canonical-full:
-    if: contains(github.event.head_commit.message, '[canonical-full-run]')
+  durable-plan:
+    if: contains(github.event.head_commit.message, '[canonical-durable-run]')
     needs: g2-g8
     runs-on: ubuntu-24.04
-    timeout-minutes: 330
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        name: Plan 194 durable shards
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          population = 37100
+          chunk = 192
+          rows = []
+          ordinal = 0
+          for start in range(0, population, chunk):
+              stop = min(population, start + chunk)
+              rows.append({"ordinal": ordinal, "start": start, "stop": stop})
+              ordinal += 1
+          assert len(rows) == 194
+          print("matrix=" + json.dumps({"include": rows}, separators=(",", ":")))
+          PY
+
+  durable-shards:
+    if: needs.durable-plan.result == 'success'
+    needs: [g2-g8, durable-plan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.durable-plan.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,12 +105,62 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-atolia.txt
 
-      - name: Build canonical full v3 world
+      - name: Build immutable canonical shard
         run: |
-          python src/atolia/v3_phase07_canonical.py \
-            --chunk-cells 512 \
-            --out-dir /tmp/atolia_v3_canonical_full \
-            | tee /tmp/atolia_v3_canonical_full_summary.json
+          mkdir -p /tmp/atolia_v3_shard
+          python src/atolia/v3_phase07_shard.py \
+            --start ${{ matrix.start }} \
+            --stop ${{ matrix.stop }} \
+            --chunk-cells 192 \
+            --expected-population 37100 \
+            --out-dir /tmp/atolia_v3_shard \
+            | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
+
+      - name: Upload shard immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_shard
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  durable-manifest:
+    if: needs.durable-shards.result == 'success'
+    needs: [durable-plan, durable-shards]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+
+      - name: Download all immutable shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: atolia-v3-canonical-shard-*
+          path: /tmp/atolia_v3_shards
+          merge-multiple: true
+
+      - name: Assemble canonical manifest without rebuilding world
+        run: |
+          mkdir -p /tmp/atolia_v3_manifest
+          python src/atolia/v3_phase07_assemble.py \
+            --shard-dir /tmp/atolia_v3_shards \
+            --out /tmp/atolia_v3_manifest/manifest.nc \
+            --population-cells 37100 \
+            --chunk-cells 192 \
+            | tee /tmp/atolia_v3_manifest/summary.json
 
       - name: Validate canonical manifest
         run: |
@@ -89,20 +168,23 @@ jobs:
           import sys
           sys.path.insert(0, 'src/atolia')
           import v3_phase07_manifest as m
-          x = m.read_manifest('/tmp/atolia_v3_canonical_full/manifest.nc')
+          x = m.read_manifest('/tmp/atolia_v3_manifest/manifest.nc')
           assert x['product_scope'] == 'canonical-full'
-          assert x['config']['materialized_cells'] == x['config']['population_cells']
+          assert x['config']['population_cells'] == 37100
+          assert x['config']['materialized_cells'] == 37100
+          assert len(x['shards']) == 194
+          assert x['shards'][0]['global_cell_start'] == 0
+          assert x['shards'][-1]['global_cell_stop'] == 37100
           print(x['world_build_id'])
           print(x['phase07_manifest_sha256'])
           print(x['totals'])
           PY
 
-      - name: Upload canonical full master set
+      - name: Upload canonical root manifest
         uses: actions/upload-artifact@v4
         with:
-          name: atolia-v3-canonical-full
-          path: |
-            /tmp/atolia_v3_canonical_full
-            /tmp/atolia_v3_canonical_full_summary.json
+          name: atolia-v3-canonical-manifest
+          path: /tmp/atolia_v3_manifest
           compression-level: 0
           retention-days: 7
+          if-no-files-found: error
