@@ -3,9 +3,10 @@ from __future__ import annotations
 
 """Cross-runtime diagnostics for the Atolia v3 phase-04 workshop layer.
 
-Reads an existing phase-04 smoke NetCDF and emits structural and precision-banded
-fingerprints.  The goal is to distinguish discrete/categorical divergence from
-continuous floating-point drift between native CPython/NumPy and Pyodide/WASM.
+Reads a phase-04 smoke NetCDF and emits structural and precision-banded
+fingerprints. If the smoke file is absent (for example after an Arcade project
+re-import), it first builds the standard 64-cell phase-04 smoke product and then
+diagnoses that exact file.
 """
 
 import argparse
@@ -40,7 +41,11 @@ def _bootstrap_atolia_path() -> Path:
 ATOLIA_DIR = _bootstrap_atolia_path()
 PROJECT_ROOT = ATOLIA_DIR.parent.parent if ATOLIA_DIR.name == "atolia" else Path.cwd()
 
+import v3_smoke
 import v3_workshop_netcdf as workshop_nc
+
+
+DEFAULT_HYPOTHESIS = Path("hypotheses/atolia_atesis_1800_1000_v0.json")
 
 
 def _sha(value: Any) -> str:
@@ -102,7 +107,30 @@ def _row_precision(row: Mapping[str, Any], digits: int) -> dict[str, Any]:
     }
 
 
+def _ensure_smoke(path: Path) -> bool:
+    if path.is_file():
+        return False
+    hypothesis_path = PROJECT_ROOT / DEFAULT_HYPOTHESIS
+    if not hypothesis_path.is_file():
+        raise FileNotFoundError(
+            f"phase-04 diagnostic cannot build missing smoke file; hypothesis not found: {hypothesis_path}"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    hypothesis = json.loads(hypothesis_path.read_text(encoding="utf-8"))
+    v3_smoke.build_smoke_master_with_workshops(
+        hypothesis,
+        out_path=path,
+        world_seed=1300,
+        workshop_count=v3_smoke.DEFAULT_SMOKE_WORKSHOPS,
+        intensity_steps=v3_smoke.DEFAULT_SMOKE_STEPS,
+        target_geography_nodes=v3_smoke.DEFAULT_SMOKE_GEOGRAPHY_NODES,
+        production_cell_limit=v3_smoke.DEFAULT_SMOKE_CELLS,
+    )
+    return True
+
+
 def diagnose(path: Path) -> dict[str, Any]:
+    built_smoke = _ensure_smoke(path)
     layer = workshop_nc.read_workshop_layer(path)
     tables = {name: layer[name] for name in workshop_nc.TABLE_LAYOUT}
 
@@ -125,8 +153,9 @@ def diagnose(path: Path) -> dict[str, Any]:
             "per_table": {name: _sha(rows) for name, rows in projected.items()},
         }
 
-    out = {
+    return {
         "path": str(path),
+        "built_smoke": bool(built_smoke),
         "python": sys.version.split()[0],
         "platform": sys.platform,
         "machine": platform.machine(),
@@ -141,7 +170,6 @@ def diagnose(path: Path) -> dict[str, Any]:
         },
         "precision": precision,
     }
-    return out
 
 
 def main() -> None:
