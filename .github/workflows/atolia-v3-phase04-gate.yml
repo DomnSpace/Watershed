@@ -32,7 +32,7 @@ jobs:
           python src/atolia/v3_smoke.py \
             --cells 64 \
             --nodes 12 \
-            --workshops 24 \
+            --workshops 320 \
             --steps 2 \
             --out /tmp/atolia_v3_phase04_smoke.nc
 
