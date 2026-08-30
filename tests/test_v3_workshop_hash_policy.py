@@ -29,14 +29,16 @@ def _tables():
     return tables
 
 
-def test_phase04_hash_ignores_platform_last_bit_float_noise():
+def test_phase04_hash_ignores_platform_tail_float_noise():
     a = _tables()
     b = deepcopy(a)
-    b["workshops"][0]["quality_memory"] += 1e-14
-    b["operations"][0]["capability"] -= 1e-14
-    b["guilds"][0]["technical_prototype_json"] = "[0.123456789012349,0.5]"
+    # Deliberately larger than one ULP: the cross-runtime diagnostic showed that
+    # derived guild affinities can differ in the 11th-12th significant digits.
+    b["workshops"][0]["quality_memory"] += 1e-11
+    b["operations"][0]["capability"] -= 1e-11
+    b["guilds"][0]["technical_prototype_json"] = "[0.123456789019,0.5]"
 
-    assert workshop_nc.WORKSHOP_HASH_POLICY == "canonical-float-12sig-v1"
+    assert workshop_nc.WORKSHOP_HASH_POLICY == "canonical-float-10sig-v1"
     assert workshop_nc.workshop_hash(a) == workshop_nc.workshop_hash(b)
 
 
