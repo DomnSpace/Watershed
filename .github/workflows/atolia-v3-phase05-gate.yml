@@ -1,0 +1,49 @@
+name: Atolia v3 phase-05 gate
+
+on:
+  push:
+    branches:
+      - atolia-v3-05-hydro-exchange-deposition
+  workflow_dispatch:
+
+jobs:
+  g2-g6:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install focused Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt pytest
+
+      - name: Phase 05 hydro-exchange-deposition gate
+        run: pytest -q tests/test_v3_hydro_exchange_deposition.py
+
+      - name: Fast real phase-05 smoke build
+        run: |
+          python src/atolia/v3_phase05_smoke.py \
+            --cells 64 \
+            --nodes 12 \
+            --workshops 320 \
+            --steps 2 \
+            --out /tmp/atolia_v3_phase05_smoke.nc
+
+      - name: Phase 04 workshop-guild-tool regression
+        run: pytest -q tests/test_v3_workshop_ecology.py tests/test_v3_workshop_hash_policy.py
+
+      - name: Phase 03 source-metallurgy regression
+        run: pytest -q tests/test_v3_source_metallurgy.py
+
+      - name: Phase 02 metal-biography regression
+        run: pytest -q tests/test_v3_metal_biography.py
+
+      - name: Phase 01 exact spine regression
+        run: pytest -q tests/test_v3_v1_spine_equivalence.py
