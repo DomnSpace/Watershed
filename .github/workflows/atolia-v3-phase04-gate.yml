@@ -25,7 +25,7 @@ jobs:
           python -m pip install -r requirements-atolia.txt pytest
 
       - name: Phase 04 workshop-guild-tool gate
-        run: pytest -q tests/test_v3_workshop_ecology.py
+        run: pytest -q tests/test_v3_workshop_ecology.py tests/test_v3_workshop_hash_policy.py
 
       - name: Fast real phase-04 smoke build
         run: |
