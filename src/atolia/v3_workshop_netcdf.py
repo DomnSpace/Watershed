@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -15,6 +16,7 @@ import v3_workshop_ecology as ecology
 
 V3_WORKSHOP_SCHEMA = "atolia-v3-workshop-guild-tools-v1"
 V3_WORKSHOP_PHASE = "atolia-v3-04-workshop-guild-tools"
+WORKSHOP_HASH_POLICY = "canonical-float-12sig-v1"
 
 TABLE_LAYOUT = {
     "workshops": ("workshops", "catalogue", "workshop"),
@@ -105,6 +107,39 @@ def _plain(value: Any) -> Any:
     return value
 
 
+def _canonical_float(value: float) -> float:
+    """Canonical hash projection; stored NetCDF f8 values remain untouched."""
+    x = float(value)
+    if not math.isfinite(x):
+        raise ValueError("phase-04 hash cannot canonicalize non-finite float")
+    if x == 0.0:
+        return 0.0
+    return float(format(x, ".12g"))
+
+
+def _hash_plain(value: Any, *, field: str | None = None) -> Any:
+    if isinstance(value, np.generic):
+        return _hash_plain(value.item(), field=field)
+    if isinstance(value, float):
+        return _canonical_float(value)
+    if isinstance(value, Mapping):
+        return {
+            str(k): _hash_plain(v, field=str(k))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_hash_plain(v) for v in value]
+    # Some catalogue fields deliberately store compact JSON strings. Parse them
+    # for the fingerprint so embedded floats receive the same canonicalization.
+    if isinstance(value, str) and field is not None and field.endswith("_json"):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return value
+        return _hash_plain(decoded)
+    return value
+
+
 def stable_json(value: Any) -> str:
     return json.dumps(
         _plain(value),
@@ -116,10 +151,20 @@ def stable_json(value: Any) -> str:
 
 def workshop_hash(tables: Mapping[str, Sequence[Mapping[str, Any]]]) -> str:
     payload = {
-        name: [_plain(dict(row)) for row in tables[name]]
-        for name in TABLE_LAYOUT
+        "hash_policy": WORKSHOP_HASH_POLICY,
+        "tables": {
+            name: [_hash_plain(dict(row)) for row in tables[name]]
+            for name in TABLE_LAYOUT
+        },
     }
-    return hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _root_group(ds: Any, name: str) -> Any:
@@ -191,6 +236,7 @@ def append_workshop_layer(
         ds.phase04_assignment_policy = ecology.WORKSHOP_ASSIGNMENT_POLICY
         ds.phase04_operator_model_status = ecology.OPERATOR_MODEL_STATUS
         ds.phase04_material_fit_status = ecology.MATERIAL_FIT_STATUS
+        ds.phase04_hash_policy = WORKSHOP_HASH_POLICY
         ds.phase04_world_seed = int(world_seed)
         ds.phase04_spine_sha256 = str(phase01_spine_sha256)
         ds.phase04_biography_sha256 = str(phase02_biography_sha256)
@@ -220,6 +266,7 @@ def append_workshop_layer(
         "assignment_policy": ecology.WORKSHOP_ASSIGNMENT_POLICY,
         "operator_model_status": ecology.OPERATOR_MODEL_STATUS,
         "material_fit_status": ecology.MATERIAL_FIT_STATUS,
+        "hash_policy": WORKSHOP_HASH_POLICY,
         "workshop_sha256": digest,
         "phase01_spine_sha256": str(phase01_spine_sha256),
         "phase02_biography_sha256": str(phase02_biography_sha256),
@@ -276,6 +323,12 @@ def read_workshop_layer(path: Path) -> dict[str, Any]:
                 SCHEMAS[table_name],
             )
 
+        stored_policy = str(getattr(ds, "phase04_hash_policy", ""))
+        if stored_policy != WORKSHOP_HASH_POLICY:
+            raise RuntimeError(
+                "v3 phase-04 hash policy mismatch: "
+                f"stored={stored_policy!r} expected={WORKSHOP_HASH_POLICY!r}"
+            )
         stored = str(ds.phase04_workshop_sha256)
         computed = workshop_hash(tables)
         if stored != computed:
@@ -289,6 +342,7 @@ def read_workshop_layer(path: Path) -> dict[str, Any]:
             "assignment_policy": str(ds.phase04_assignment_policy),
             "operator_model_status": str(ds.phase04_operator_model_status),
             "material_fit_status": str(ds.phase04_material_fit_status),
+            "hash_policy": stored_policy,
             "world_seed": int(ds.phase04_world_seed),
             "phase01_spine_sha256": str(ds.phase04_spine_sha256),
             "phase02_biography_sha256": str(ds.phase04_biography_sha256),
