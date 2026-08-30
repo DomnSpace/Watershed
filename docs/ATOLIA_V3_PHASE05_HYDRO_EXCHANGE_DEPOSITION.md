@@ -34,7 +34,7 @@ Assignments are grouped into shared pools by:
 
 `(loss_node_id, production time slice, deposition mode)`
 
-The pool is a terminal context shared by multiple weighted lineages when those keys coincide. Pooling occurs after the loss process and does not feed back into circulation.
+The pool is a terminal context shared by multiple weighted lineages when those keys coincide. Pooling occurs after the loss process and does not feed back into circulation. The production time slice is retained because phase 02 does not yet contain an independently evidenced terminal calendar date; phase 05 does not invent one.
 
 ## Survival → discovery → recording
 
@@ -56,7 +56,7 @@ These are broad priors, not an empirical archaeological observation calibration.
 - `/deposition/pools`
 - `/archaeology/observation`
 
-The phase-05 root metadata links the exact phase-01 spine, phase-02 biography, phase-03 metallurgy and phase-04 workshop hashes. The phase-05 fingerprint uses `canonical-float-12sig-v1` while stored NetCDF values remain full `f8`.
+The phase-05 root metadata links the exact phase-01 spine, phase-02 biography, phase-03 metallurgy and phase-04 workshop hashes. Derived workshop/environment fingerprints use `canonical-float-10sig-v1`; stored NetCDF values remain full `f8`. The 10-significant-digit projection is a reproducibility fingerprint only, chosen after diagnostics showed structurally identical native/WASM runs can differ in the 11th–12th digits of derived guild-affinity arithmetic.
 
 ## Scientific gaps kept explicit
 
