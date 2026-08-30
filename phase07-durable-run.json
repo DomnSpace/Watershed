@@ -1,0 +1,13 @@
+{
+  "phase": "atolia-v3-07-canonical-full",
+  "mode": "durable-cloud-shards",
+  "population_cells": 37100,
+  "chunk_cells": 192,
+  "expected_shards": 194,
+  "max_parallel": 8,
+  "world_seed": 20260824,
+  "workshops": 3200,
+  "intensity_steps": 28,
+  "target_geography_nodes": 1000,
+  "artifact_retention_days": 7
+}
