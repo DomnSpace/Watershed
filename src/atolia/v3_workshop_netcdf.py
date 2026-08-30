@@ -16,7 +16,10 @@ import v3_workshop_ecology as ecology
 
 V3_WORKSHOP_SCHEMA = "atolia-v3-workshop-guild-tools-v1"
 V3_WORKSHOP_PHASE = "atolia-v3-04-workshop-guild-tools"
-WORKSHOP_HASH_POLICY = "canonical-float-12sig-v1"
+# Derived workshop affinities/capabilities include norm/exp arithmetic whose final
+# 11th-12th significant digits can vary across CPU/libm/WASM implementations.
+# Full f8 values remain stored; only the reproducibility projection is rounded.
+WORKSHOP_HASH_POLICY = "canonical-float-10sig-v1"
 
 TABLE_LAYOUT = {
     "workshops": ("workshops", "catalogue", "workshop"),
@@ -108,13 +111,12 @@ def _plain(value: Any) -> Any:
 
 
 def _canonical_float(value: float) -> float:
-    """Canonical hash projection; stored NetCDF f8 values remain untouched."""
     x = float(value)
     if not math.isfinite(x):
         raise ValueError("phase-04 hash cannot canonicalize non-finite float")
     if x == 0.0:
         return 0.0
-    return float(format(x, ".12g"))
+    return float(format(x, ".10g"))
 
 
 def _hash_plain(value: Any, *, field: str | None = None) -> Any:
@@ -123,14 +125,9 @@ def _hash_plain(value: Any, *, field: str | None = None) -> Any:
     if isinstance(value, float):
         return _canonical_float(value)
     if isinstance(value, Mapping):
-        return {
-            str(k): _hash_plain(v, field=str(k))
-            for k, v in value.items()
-        }
+        return {str(k): _hash_plain(v, field=str(k)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_hash_plain(v) for v in value]
-    # Some catalogue fields deliberately store compact JSON strings. Parse them
-    # for the fingerprint so embedded floats receive the same canonicalization.
     if isinstance(value, str) and field is not None and field.endswith("_json"):
         try:
             decoded = json.loads(value)
@@ -141,12 +138,7 @@ def _hash_plain(value: Any, *, field: str | None = None) -> Any:
 
 
 def stable_json(value: Any) -> str:
-    return json.dumps(
-        _plain(value),
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
+    return json.dumps(_plain(value), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def workshop_hash(tables: Mapping[str, Sequence[Mapping[str, Any]]]) -> str:
@@ -157,14 +149,8 @@ def workshop_hash(tables: Mapping[str, Sequence[Mapping[str, Any]]]) -> str:
             for name in TABLE_LAYOUT
         },
     }
-    return hashlib.sha256(
-        json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-    ).hexdigest()
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _root_group(ds: Any, name: str) -> Any:
@@ -185,20 +171,10 @@ def _write_table(
         if kind in {"str", "nstr"}:
             var = group.createVariable(field, str, (dim_name,))
             if values:
-                var[:] = np.asarray(
-                    ["" if value is None else str(value) for value in values],
-                    dtype=object,
-                )
+                var[:] = np.asarray(["" if v is None else str(v) for v in values], dtype=object)
             continue
         dtype = "i1" if kind == "bool" else kind
-        var = group.createVariable(
-            field,
-            dtype,
-            (dim_name,),
-            zlib=True,
-            complevel=4,
-            shuffle=True,
-        )
+        var = group.createVariable(field, dtype, (dim_name,), zlib=True, complevel=4, shuffle=True)
         if values:
             if kind == "bool":
                 var[:] = np.asarray([1 if bool(v) else 0 for v in values], dtype=np.int8)
@@ -222,12 +198,8 @@ def append_workshop_layer(
     with Dataset(path, "a") as ds:
         collisions = {"workshops", "guilds", "tools", "process"}.intersection(ds.groups)
         if collisions:
-            raise RuntimeError(
-                "phase-04 groups already exist: " + ", ".join(sorted(collisions))
-            )
-        if str(getattr(ds, "phase03_metallurgy_sha256", "")) != str(
-            phase03_metallurgy_sha256
-        ):
+            raise RuntimeError("phase-04 groups already exist: " + ", ".join(sorted(collisions)))
+        if str(getattr(ds, "phase03_metallurgy_sha256", "")) != str(phase03_metallurgy_sha256):
             raise RuntimeError("phase-04 append does not match phase-03 metallurgy hash")
 
         ds.latest_phase = V3_WORKSHOP_PHASE
@@ -249,13 +221,7 @@ def append_workshop_layer(
             if root is None:
                 root = _root_group(ds, root_name)
                 roots[root_name] = root
-            _write_table(
-                root,
-                child_name,
-                dim_name,
-                tables[table_name],
-                SCHEMAS[table_name],
-            )
+            _write_table(root, child_name, dim_name, tables[table_name], SCHEMAS[table_name])
 
     localized = sum(bool(row["localized"]) for row in tables["operations"])
     return {
@@ -278,19 +244,14 @@ def append_workshop_layer(
 
 
 def _read_strings(var: Any, *, nullable: bool) -> list[Any]:
-    values = var[:]
     out = []
-    for value in values:
+    for value in var[:]:
         text = value.decode("utf-8") if isinstance(value, bytes) else str(value)
         out.append(None if nullable and text == "" else text)
     return out
 
 
-def _read_table(
-    group: Any,
-    dim_name: str,
-    schema: Sequence[tuple[str, str]],
-) -> list[dict[str, Any]]:
+def _read_table(group: Any, dim_name: str, schema: Sequence[tuple[str, str]]) -> list[dict[str, Any]]:
     count = len(group.dimensions[dim_name])
     columns: dict[str, list[Any]] = {}
     for field, kind in schema:
@@ -300,15 +261,12 @@ def _read_table(
         else:
             raw = var[:]
             if kind == "bool":
-                columns[field] = [bool(int(value)) for value in raw]
+                columns[field] = [bool(int(v)) for v in raw]
             elif kind in {"i8", "i4"}:
-                columns[field] = [int(value) for value in raw]
+                columns[field] = [int(v) for v in raw]
             else:
-                columns[field] = [float(value) for value in raw]
-    return [
-        {field: columns[field][i] for field, _ in schema}
-        for i in range(count)
-    ]
+                columns[field] = [float(v) for v in raw]
+    return [{field: columns[field][i] for field, _ in schema} for i in range(count)]
 
 
 def read_workshop_layer(path: Path) -> dict[str, Any]:
@@ -316,11 +274,8 @@ def read_workshop_layer(path: Path) -> dict[str, Any]:
     with Dataset(path, "r") as ds:
         tables: dict[str, list[dict[str, Any]]] = {}
         for table_name, (root_name, child_name, dim_name) in TABLE_LAYOUT.items():
-            group = ds.groups[root_name].groups[child_name]
             tables[table_name] = _read_table(
-                group,
-                dim_name,
-                SCHEMAS[table_name],
+                ds.groups[root_name].groups[child_name], dim_name, SCHEMAS[table_name]
             )
 
         stored_policy = str(getattr(ds, "phase04_hash_policy", ""))
