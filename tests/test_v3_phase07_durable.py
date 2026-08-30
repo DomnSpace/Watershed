@@ -29,30 +29,44 @@ def test_independent_workers_assemble_without_rebuilding_world(tmp_path: Path) -
         nodes=12,
     )
     first = shard.build_one_shard(start=0, stop=16, **common)
-    population = int(first["population_cells"])
+    real_population = int(first["population_cells"])
     second = shard.build_one_shard(
         start=16,
         stop=32,
-        expected_population=population,
+        expected_population=real_population,
         **common,
     )
     assert first["world_build_id"] == second["world_build_id"]
     assert first["shard"]["global_cell_stop"] == second["shard"]["global_cell_start"]
 
-    # Assemble a deliberately two-shard *test population*. The assembler sees no
-    # world object; it validates only immutable shard truth and global identities.
-    # Rename/copying is unnecessary: use the actual first 32 cells as population
-    # by requesting the noncanonical test config directly from a pair rebuilt with
-    # population-scoped config would alter build IDs, so instead test the reader
-    # invariants here and the canonical/full assembler in the workflow prefix gate.
     for result in (first, second):
         path = Path(result["path"])
         assert path.is_file()
         assert result["shard"]["chunk_sha256"]
 
+    # world_build_id intentionally excludes population/chunk storage coordinates,
+    # so these independently produced first-two shards can be assembled as a
+    # 32-cell noncanonical test product without constructing a world in this step.
+    result = assemble.assemble_shards(
+        hypothesis,
+        shard_dir=shard_dir,
+        out_path=tmp_path / "manifest.nc",
+        population_cells=32,
+        chunk_cells=16,
+        world_seed=1300,
+        workshops=320,
+        steps=2,
+        nodes=12,
+    )
+    assert result["runner"]["assembly_only"] is True
+    assert result["runner"]["shards"] == 2
+    assert result["roundtrip"]["global_cell_coverage_closed"] is True
+    read = manifest.read_manifest(tmp_path / "manifest.nc")
+    assert len(read["shards"]) == 2
+    assert read["config"]["materialized_cells"] == 32
+
 
 def test_manifest_world_identity_ignores_chunk_size() -> None:
-    hypothesis = {"x": 1}
     base = {
         "product_scope": "canonical-full",
         "world_seed": 7,
