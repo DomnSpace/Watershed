@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
+
+ROOT = Path(__file__).resolve().parents[1]
+ATOLIA = ROOT / "src" / "atolia"
+if str(ATOLIA) not in sys.path:
+    sys.path.insert(0, str(ATOLIA))
 
 from netCDF4 import Dataset
 
@@ -174,10 +180,9 @@ def test_phase05_netcdf_roundtrip_and_hash_links(tmp_path: Path):
 
 
 def test_phase05_source_does_not_import_rejected_v2_particle_engine():
-    root = Path(__file__).resolve().parents[1]
     text = "\n".join([
-        (root / "src/atolia/v3_hydro_exchange_deposition.py").read_text(encoding="utf-8"),
-        (root / "src/atolia/v3_phase05_netcdf.py").read_text(encoding="utf-8"),
+        (ROOT / "src/atolia/v3_hydro_exchange_deposition.py").read_text(encoding="utf-8"),
+        (ROOT / "src/atolia/v3_phase05_netcdf.py").read_text(encoding="utf-8"),
     ])
     assert "build_v2_direct_world" not in text
     assert "_simulate_particle" not in text
