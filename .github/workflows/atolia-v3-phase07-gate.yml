@@ -61,35 +61,45 @@ jobs:
     needs: g2-g8
     runs-on: ubuntu-24.04
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
+      canary: ${{ steps.plan.outputs.canary }}
+      wave0: ${{ steps.plan.outputs.wave0 }}
+      wave1: ${{ steps.plan.outputs.wave1 }}
+      wave2: ${{ steps.plan.outputs.wave2 }}
     steps:
       - id: plan
-        name: Plan 194 durable shards
+        name: Plan 580 durable 64-cell shards in nested waves
         shell: bash
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           population = 37100
-          chunk = 192
+          chunk = 64
           rows = []
-          ordinal = 0
-          for start in range(0, population, chunk):
+          for ordinal, start in enumerate(range(0, population, chunk)):
               stop = min(population, start + chunk)
               rows.append({"ordinal": ordinal, "start": start, "stop": stop})
-              ordinal += 1
-          assert len(rows) == 194
-          print("matrix=" + json.dumps({"include": rows}, separators=(",", ":")))
+          assert len(rows) == 580
+          parts = {
+              "canary": rows[:3],
+              "wave0": rows[3:195],
+              "wave1": rows[195:387],
+              "wave2": rows[387:],
+          }
+          assert [len(parts[k]) for k in ("canary", "wave0", "wave1", "wave2")] == [3, 192, 192, 193]
+          assert sum(len(v) for v in parts.values()) == len(rows)
+          for name, part in parts.items():
+              print(name + "=" + json.dumps({"include": part}, separators=(",", ":")))
           PY
 
-  durable-shards:
+  durable-canary:
     if: needs.durable-plan.result == 'success'
     needs: [g2-g8, durable-plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 8
-      matrix: ${{ fromJSON(needs.durable-plan.outputs.matrix) }}
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.durable-plan.outputs.canary) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,17 +115,137 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-atolia.txt
 
+      - name: Build immutable canonical canary shard
+        run: |
+          mkdir -p /tmp/atolia_v3_shard
+          python src/atolia/v3_phase07_shard.py \
+            --start ${{ matrix.start }} \
+            --stop ${{ matrix.stop }} \
+            --chunk-cells 64 \
+            --expected-population 37100 \
+            --out-dir /tmp/atolia_v3_shard \
+            | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
+
+      - name: Upload canary shard immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_shard
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  durable-wave0:
+    if: ${{ always() && needs.g2-g8.result == 'success' && needs.durable-plan.result == 'success' && needs.durable-canary.result == 'success' }}
+    needs: [g2-g8, durable-plan, durable-canary]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.durable-plan.outputs.wave0) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
       - name: Build immutable canonical shard
         run: |
           mkdir -p /tmp/atolia_v3_shard
           python src/atolia/v3_phase07_shard.py \
             --start ${{ matrix.start }} \
             --stop ${{ matrix.stop }} \
-            --chunk-cells 192 \
+            --chunk-cells 64 \
             --expected-population 37100 \
             --out-dir /tmp/atolia_v3_shard \
             | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
+      - name: Upload shard immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_shard
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
 
+  durable-wave1:
+    if: ${{ always() && needs.g2-g8.result == 'success' && needs.durable-plan.result == 'success' && needs.durable-canary.result == 'success' }}
+    needs: [g2-g8, durable-plan, durable-canary, durable-wave0]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.durable-plan.outputs.wave1) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+      - name: Build immutable canonical shard
+        run: |
+          mkdir -p /tmp/atolia_v3_shard
+          python src/atolia/v3_phase07_shard.py \
+            --start ${{ matrix.start }} \
+            --stop ${{ matrix.stop }} \
+            --chunk-cells 64 \
+            --expected-population 37100 \
+            --out-dir /tmp/atolia_v3_shard \
+            | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
+      - name: Upload shard immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_shard
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  durable-wave2:
+    if: ${{ always() && needs.g2-g8.result == 'success' && needs.durable-plan.result == 'success' && needs.durable-canary.result == 'success' }}
+    needs: [g2-g8, durable-plan, durable-canary, durable-wave0, durable-wave1]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.durable-plan.outputs.wave2) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+      - name: Build immutable canonical shard
+        run: |
+          mkdir -p /tmp/atolia_v3_shard
+          python src/atolia/v3_phase07_shard.py \
+            --start ${{ matrix.start }} \
+            --stop ${{ matrix.stop }} \
+            --chunk-cells 64 \
+            --expected-population 37100 \
+            --out-dir /tmp/atolia_v3_shard \
+            | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
       - name: Upload shard immediately
         uses: actions/upload-artifact@v4
         with:
@@ -126,10 +256,10 @@ jobs:
           if-no-files-found: error
 
   durable-manifest:
-    if: needs.durable-shards.result == 'success'
-    needs: [durable-plan, durable-shards]
+    if: ${{ always() && needs.durable-canary.result == 'success' && needs.durable-wave0.result == 'success' && needs.durable-wave1.result == 'success' && needs.durable-wave2.result == 'success' }}
+    needs: [durable-plan, durable-canary, durable-wave0, durable-wave1, durable-wave2]
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -159,7 +289,7 @@ jobs:
             --shard-dir /tmp/atolia_v3_shards \
             --out /tmp/atolia_v3_manifest/manifest.nc \
             --population-cells 37100 \
-            --chunk-cells 192 \
+            --chunk-cells 64 \
             | tee /tmp/atolia_v3_manifest/summary.json
 
       - name: Validate canonical manifest
@@ -172,7 +302,7 @@ jobs:
           assert x['product_scope'] == 'canonical-full'
           assert x['config']['population_cells'] == 37100
           assert x['config']['materialized_cells'] == 37100
-          assert len(x['shards']) == 194
+          assert len(x['shards']) == 580
           assert x['shards'][0]['global_cell_start'] == 0
           assert x['shards'][-1]['global_cell_stop'] == 37100
           print(x['world_build_id'])
