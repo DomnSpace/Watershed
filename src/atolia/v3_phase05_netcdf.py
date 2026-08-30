@@ -16,7 +16,10 @@ import v3_hydro_exchange_deposition as phase05
 
 V3_PHASE05_SCHEMA = "atolia-v3-hydro-exchange-deposition-v1"
 V3_PHASE05_PHASE = "atolia-v3-05-hydro-exchange-deposition"
-PHASE05_HASH_POLICY = "canonical-float-12sig-v1"
+# Hydrology priors and observation weights use exp/haversine arithmetic. Preserve
+# full f8 values in the file but fingerprint at the demonstrated cross-runtime
+# precision used for other derived v3 layers.
+PHASE05_HASH_POLICY = "canonical-float-10sig-v1"
 
 TABLE_LAYOUT = {
     "hydro_evidence": ("hydro", "evidence", "hydro_evidence"),
@@ -81,7 +84,7 @@ def _canonical_float(value: float) -> float:
         raise ValueError("phase-05 hash cannot canonicalize non-finite float")
     if x == 0.0:
         return 0.0
-    return float(format(x, ".12g"))
+    return float(format(x, ".10g"))
 
 
 def _hash_plain(value: Any) -> Any:
@@ -228,8 +231,7 @@ def append_phase05(
 
 
 def _read_strings(var: Any) -> list[str]:
-    values = var[:]
-    return [value.decode("utf-8") if isinstance(value, bytes) else str(value) for value in values]
+    return [value.decode("utf-8") if isinstance(value, bytes) else str(value) for value in var[:]]
 
 
 def _read_table(group: Any, dim_name: str, schema: Sequence[tuple[str, str]]) -> list[dict[str, Any]]:
@@ -255,7 +257,9 @@ def read_phase05(path: Path) -> dict[str, Any]:
     with Dataset(path, "r") as ds:
         serial: dict[str, list[dict[str, Any]]] = {}
         for table_name, (root_name, child_name, dim_name) in TABLE_LAYOUT.items():
-            serial[table_name] = _read_table(ds.groups[root_name].groups[child_name], dim_name, SCHEMAS[table_name])
+            serial[table_name] = _read_table(
+                ds.groups[root_name].groups[child_name], dim_name, SCHEMAS[table_name]
+            )
 
         tables = {name: [dict(row) for row in rows] for name, rows in serial.items()}
         for row in tables["hydro_ensemble"]:
