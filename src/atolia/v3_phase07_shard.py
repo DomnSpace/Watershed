@@ -118,7 +118,8 @@ def build_one_shard(
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    name = f"atolia_v3_canonical_{start:06d}_{stop:06d}.nc"
+    stem = f"atolia_v3_canonical_{start:06d}_{stop:06d}"
+    name = f"{stem}.nc"
     path = out_dir / name
     if path.exists():
         path.unlink()
@@ -152,7 +153,7 @@ def build_one_shard(
         raise RuntimeError("phase-07 durable shard roundtrip hash mismatch")
     validate_finished = _stage("immutable shard validated", validate_started)
 
-    fragment_path = out_dir / f"{name}.fragment.json"
+    fragment_path = out_dir / f"{stem}.fragment.json"
     fragment = fragment_io.write_fragment(
         fragment_path,
         checked,
