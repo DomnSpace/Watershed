@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 ATOLIA = ROOT / "src" / "atolia"
 if str(ATOLIA) not in sys.path:
@@ -160,3 +162,63 @@ def test_manifest_world_identity_ignores_chunk_size() -> None:
     a = dict(base, chunk_cells=16)
     b = dict(base, chunk_cells=32)
     assert manifest.world_build_id(a) == manifest.world_build_id(b)
+
+
+def test_fragment_preflight_rejects_incomplete_set(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="expected 2 fragments, found 0"):
+        assemble_fragments.preflight_fragments(
+            tmp_path,
+            population_cells=2,
+            chunk_cells=1,
+        )
+
+
+def test_pool_collision_diagnostic_reports_exact_pair(capsys: pytest.CaptureFixture[str]) -> None:
+    aggregate: dict[str, dict[str, object]] = {}
+    origins: dict[str, tuple[dict[str, object], dict[str, object]]] = {}
+    first_fragment = {
+        "chunk_ordinal": 12,
+        "global_cell_start": 768,
+        "global_cell_stop": 832,
+    }
+    second_fragment = {
+        "chunk_ordinal": 13,
+        "global_cell_start": 832,
+        "global_cell_stop": 896,
+    }
+    first = {
+        "deposition_pool_id": "pool-collision",
+        "node_id": "node-a",
+        "date_bc": 1200,
+        "mode": "settling",
+        "member_count": 2,
+        "represented_weight": 3.5,
+        "hydro_realization_id": "hydro-1",
+        "hydro_context_score": 0.25,
+    }
+    second = dict(first, node_id="node-b", member_count=1, represented_weight=2.0)
+
+    assemble_fragments._merge_pool_with_diagnostics(
+        aggregate,
+        origins,
+        first,
+        path=Path("atolia_v3_canonical_000768_000832.fragment.json"),
+        frag=first_fragment,
+    )
+    with pytest.raises(RuntimeError, match="differing fields: node_id"):
+        assemble_fragments._merge_pool_with_diagnostics(
+            aggregate,
+            origins,
+            second,
+            path=Path("atolia_v3_canonical_000832_000896.fragment.json"),
+            frag=second_fragment,
+        )
+
+    stderr = capsys.readouterr().err
+    assert "PHASE07_DEPOSITION_POOL_COLLISION" in stderr
+    assert '"node_id": "node-a"' in stderr
+    assert '"node_id": "node-b"' in stderr
+    assert '"chunk_ordinal": 12' in stderr
+    assert '"chunk_ordinal": 13' in stderr
+    assert "atolia_v3_canonical_000768_000832.fragment.json" in stderr
+    assert "atolia_v3_canonical_000832_000896.fragment.json" in stderr
