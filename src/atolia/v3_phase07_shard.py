@@ -5,8 +5,9 @@ from __future__ import annotations
 
 This is the cloud-matrix worker. Every invocation rebuilds the same canonical
 world, materializes one global production-cell interval, writes one immutable
-NetCDF shard, validates its phase-07 marker, and exits. No manifest is written
-here; v3_phase07_assemble.py merges independently uploaded shards afterwards.
+NetCDF shard, validates its phase-07 marker, emits a compact manifest fragment,
+and exits.  The fragment is only a validated projection for later root-manifest
+assembly; it never replaces the immutable shard.
 """
 
 import argparse
@@ -27,6 +28,7 @@ import build_v3_master
 import intensity_circulation as intensity
 import release_candidate_invariants as release_invariants
 import v3_phase07_canonical as canonical
+import v3_phase07_fragment as fragment_io
 import v3_phase07_manifest as manifest
 
 
@@ -139,7 +141,7 @@ def build_one_shard(
     )
 
     validate_started = _stage("validating immutable shard roundtrip")
-    checked, _, _ = canonical._read_existing_shard(
+    checked, checked04, checked05 = canonical._read_existing_shard(
         path,
         expected_world_build_id=build_id,
         ordinal=ordinal,
@@ -150,7 +152,16 @@ def build_one_shard(
         raise RuntimeError("phase-07 durable shard roundtrip hash mismatch")
     validate_finished = _stage("immutable shard validated", validate_started)
 
-    public_record = {k: v for k, v in record.items() if not k.startswith("_")}
+    fragment_path = out_dir / f"{name}.fragment.json"
+    fragment = fragment_io.write_fragment(
+        fragment_path,
+        checked,
+        checked04,
+        checked05,
+        source={"mode": "fresh-validated-worker"},
+    )
+
+    public_record = {k: v for k, v in checked.items() if not k.startswith("_")}
     completed = time.perf_counter()
     summary = {
         "phase": manifest.V3_PHASE07_PHASE,
@@ -161,6 +172,11 @@ def build_one_shard(
         "shard": public_record,
         "path": str(path),
         "bytes": int(path.stat().st_size),
+        "fragment": {
+            "path": str(fragment_path),
+            "fragment_sha256": str(fragment["fragment_sha256"]),
+            "bytes": int(fragment_path.stat().st_size),
+        },
         "release_invariants_version": str(release_version),
         "production_mass_error_kg": mass_error,
         "timing_seconds": {
@@ -175,7 +191,8 @@ def build_one_shard(
         json.dumps(summary, sort_keys=True, indent=2), encoding="utf-8"
     )
     _stage(
-        f"complete cells {start}:{stop}; {path.stat().st_size} bytes",
+        f"complete cells {start}:{stop}; {path.stat().st_size} bytes; "
+        f"fragment {fragment_path.stat().st_size} bytes",
         worker_started,
     )
     return summary
