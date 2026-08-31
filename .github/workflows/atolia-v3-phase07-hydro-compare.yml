@@ -1,0 +1,225 @@
+name: Atolia v3 phase-07 hydro variant compare
+
+on:
+  push:
+    branches:
+      - atolia-v3-07-manifest-rescue
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase07-hydro-compare
+  cancel-in-progress: false
+
+env:
+  SOURCE_RUN_ID: "33305458675"
+  SOURCE_COMMIT: "29ac8cb5ea80f7d63631b153c27fce30efcb0bac"
+
+jobs:
+  extract:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase07-hydro-compare]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ordinal: 1
+            start: 64
+            stop: 128
+          - ordinal: 2
+            start: 128
+            stop: 192
+    steps:
+      - name: Checkout rescue code
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: python -m pip install -r requirements-atolia.txt
+      - name: Download one immutable source shard read-only
+        uses: actions/download-artifact@v6
+        with:
+          name: atolia-v3-canonical-shard-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Extract global hydro tables only
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf -v start "%06d" "${{ matrix.start }}"
+          printf -v stop "%06d" "${{ matrix.stop }}"
+          expected="atolia_v3_canonical_${start}_${stop}.nc"
+          shard="$(find /tmp/atolia_v3_source -type f -name "$expected" -print -quit)"
+          test -n "$shard"
+          mkdir -p /tmp/atolia_v3_hydro
+          SHARD="$shard" ORDINAL="${{ matrix.ordinal }}" python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import sys
+          sys.path.insert(0, 'src/atolia')
+          from netCDF4 import Dataset
+          import v3_phase05_netcdf
+          import v3_phase07_manifest as manifest
+
+          shard = Path(os.environ['SHARD'])
+          read05 = v3_phase05_netcdf.read_phase05(shard)
+          with Dataset(shard, 'r') as ds:
+              marker = json.loads(str(ds.groups['canonical_chunk'].record_json))
+          payload = {
+              'schema': 'atolia-v3-phase07-hydro-snapshot-v1',
+              'source_run_id': os.environ.get('SOURCE_RUN_ID'),
+              'source_commit': os.environ.get('SOURCE_COMMIT'),
+              'chunk_ordinal': int(os.environ['ORDINAL']),
+              'world_build_id': marker['world_build_id'],
+              'hydro_evidence': read05['hydro_evidence'],
+              'hydro_ensemble': read05['hydro_ensemble'],
+              'hydro_realization': read05['hydro_realization'],
+          }
+          out = Path('/tmp/atolia_v3_hydro') / f"hydro-{int(os.environ['ORDINAL'])}.json"
+          out.write_text(manifest.stable_json(payload) + '\n', encoding='utf-8')
+          print(json.dumps({
+              'ordinal': payload['chunk_ordinal'],
+              'world_build_id': payload['world_build_id'],
+              'hydro_evidence': len(payload['hydro_evidence']),
+              'hydro_ensemble': len(payload['hydro_ensemble']),
+              'hydro_realization': len(payload['hydro_realization']),
+              'snapshot_bytes': out.stat().st_size,
+          }, sort_keys=True))
+          PY
+      - name: Upload compact hydro snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase07-hydro-snapshot-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_hydro/hydro-${{ matrix.ordinal }}.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Remove only runner-local shard copy
+        if: always()
+        run: rm -rf /tmp/atolia_v3_source
+
+  compare:
+    needs: extract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download the two compact snapshots
+        uses: actions/download-artifact@v6
+        with:
+          pattern: phase07-hydro-snapshot-*
+          path: /tmp/atolia_v3_hydro_snapshots
+      - name: Compare hydro semantics and floating deltas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+
+          paths = sorted(Path('/tmp/atolia_v3_hydro_snapshots').glob('**/hydro-*.json'))
+          if len(paths) != 2:
+              raise RuntimeError(f'expected two hydro snapshots, found {len(paths)}')
+          rows = [json.loads(path.read_text(encoding='utf-8')) for path in paths]
+          rows.sort(key=lambda row: int(row['chunk_ordinal']))
+          a, b = rows
+
+          def stable(value):
+              return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
+          def digest(value):
+              return hashlib.sha256(stable(value).encode('utf-8')).hexdigest()
+          def keyed(seq, key):
+              return {str(row[key]): row for row in seq}
+          def max_abs_delta(ma, mb, fields):
+              out = {field: 0.0 for field in fields}
+              for key in sorted(set(ma) & set(mb)):
+                  for field in fields:
+                      out[field] = max(out[field], abs(float(ma[key][field]) - float(mb[key][field])))
+              return out
+
+          ev_a = keyed(a['hydro_evidence'], 'evidence_id')
+          ev_b = keyed(b['hydro_evidence'], 'evidence_id')
+          en_a = keyed(a['hydro_ensemble'], 'edge_id')
+          en_b = keyed(b['hydro_ensemble'], 'edge_id')
+          re_a = keyed(a['hydro_realization'], 'edge_id')
+          re_b = keyed(b['hydro_realization'], 'edge_id')
+
+          evidence_ids_equal = set(ev_a) == set(ev_b)
+          ensemble_edge_ids_equal = set(en_a) == set(en_b)
+          realization_edge_ids_equal = set(re_a) == set(re_b)
+
+          ensemble_categorical_fields = ('a', 'b', 'mode', 'structural', 'evidence_ids', 'empirical_evidence_count', 'probability_basis')
+          realization_categorical_fields = ('a', 'b', 'mode', 'structural', 'realized')
+          ensemble_categorical_mismatches = []
+          realization_categorical_mismatches = []
+          if ensemble_edge_ids_equal:
+              for edge_id in sorted(en_a):
+                  differing = [f for f in ensemble_categorical_fields if en_a[edge_id][f] != en_b[edge_id][f]]
+                  if differing:
+                      ensemble_categorical_mismatches.append({'edge_id': edge_id, 'fields': differing})
+          if realization_edge_ids_equal:
+              for edge_id in sorted(re_a):
+                  differing = [f for f in realization_categorical_fields if re_a[edge_id][f] != re_b[edge_id][f]]
+                  if differing:
+                      realization_categorical_mismatches.append({'edge_id': edge_id, 'fields': differing})
+
+          realization_ids_a = sorted({str(row['realization_id']) for row in a['hydro_realization']})
+          realization_ids_b = sorted({str(row['realization_id']) for row in b['hydro_realization']})
+
+          report = {
+              'schema': 'atolia-v3-phase07-hydro-variant-compare-v1',
+              'ordinals': [a['chunk_ordinal'], b['chunk_ordinal']],
+              'world_build_ids': [a['world_build_id'], b['world_build_id']],
+              'exact_hashes': {
+                  'hydro_evidence': [digest(a['hydro_evidence']), digest(b['hydro_evidence'])],
+                  'hydro_ensemble': [digest(a['hydro_ensemble']), digest(b['hydro_ensemble'])],
+                  'hydro_realization': [digest(a['hydro_realization']), digest(b['hydro_realization'])],
+              },
+              'counts': {
+                  'hydro_evidence': [len(ev_a), len(ev_b)],
+                  'hydro_ensemble': [len(en_a), len(en_b)],
+                  'hydro_realization': [len(re_a), len(re_b)],
+              },
+              'identity': {
+                  'evidence_ids_equal': evidence_ids_equal,
+                  'ensemble_edge_ids_equal': ensemble_edge_ids_equal,
+                  'realization_edge_ids_equal': realization_edge_ids_equal,
+                  'ensemble_categorical_mismatch_count': len(ensemble_categorical_mismatches),
+                  'realization_categorical_mismatch_count': len(realization_categorical_mismatches),
+                  'realized_topology_equal': realization_edge_ids_equal and not realization_categorical_mismatches,
+                  'realization_ids': [realization_ids_a, realization_ids_b],
+              },
+              'max_abs_numeric_delta': {
+                  'hydro_evidence': max_abs_delta(ev_a, ev_b, ('confidence', 'navigability')) if evidence_ids_equal else None,
+                  'hydro_ensemble': max_abs_delta(en_a, en_b, ('probability', 'navigability')) if ensemble_edge_ids_equal else None,
+                  'hydro_realization': max_abs_delta(re_a, re_b, ('draw', 'probability', 'navigability')) if realization_edge_ids_equal else None,
+              },
+              'sample_ensemble_categorical_mismatches': ensemble_categorical_mismatches[:10],
+              'sample_realization_categorical_mismatches': realization_categorical_mismatches[:10],
+          }
+          out = Path('/tmp/atolia_v3_hydro_compare.json')
+          out.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps(report, indent=2, sort_keys=True))
+
+          if not evidence_ids_equal or not ensemble_edge_ids_equal or not realization_edge_ids_equal:
+              raise RuntimeError('hydro variants differ in row identity')
+          if ensemble_categorical_mismatches or realization_categorical_mismatches:
+              raise RuntimeError('hydro variants differ in categorical/realized topology')
+          PY
+      - name: Upload comparison report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase07-hydro-variant-compare
+          path: /tmp/atolia_v3_hydro_compare.json
+          retention-days: 90
+          if-no-files-found: warn
