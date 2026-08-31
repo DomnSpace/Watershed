@@ -1,0 +1,307 @@
+name: Atolia v3 phase-07 manifest rescue
+
+on:
+  push:
+    branches:
+      - atolia-v3-07-manifest-rescue
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase07-manifest-rescue
+  cancel-in-progress: false
+
+env:
+  SOURCE_RUN_ID: "33305458675"
+  SOURCE_COMMIT: "29ac8cb5ea80f7d63631b153c27fce30efcb0bac"
+  POPULATION_CELLS: "37100"
+  CHUNK_CELLS: "64"
+
+jobs:
+  unit-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout rescue branch
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install focused dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt pytest
+      - name: Verify direct and fragment assembly equivalence
+        run: pytest -q tests/test_v3_phase07_canonical.py tests/test_v3_phase07_durable.py
+
+  rescue-plan:
+    needs: unit-gate
+    runs-on: ubuntu-24.04
+    outputs:
+      canary: ${{ steps.plan.outputs.canary }}
+      wave0: ${{ steps.plan.outputs.wave0 }}
+      wave1: ${{ steps.plan.outputs.wave1 }}
+      wave2: ${{ steps.plan.outputs.wave2 }}
+    steps:
+      - id: plan
+        name: Plan bounded read-only extraction
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          population = 37100
+          chunk = 64
+          rows = []
+          for ordinal, start in enumerate(range(0, population, chunk)):
+              stop = min(population, start + chunk)
+              rows.append({"ordinal": ordinal, "start": start, "stop": stop})
+          assert len(rows) == 580
+          parts = {
+              "canary": rows[:3],
+              "wave0": rows[3:195],
+              "wave1": rows[195:387],
+              "wave2": rows[387:],
+          }
+          assert [len(parts[k]) for k in ("canary", "wave0", "wave1", "wave2")] == [3, 192, 192, 193]
+          for name, part in parts.items():
+              print(name + "=" + json.dumps({"include": part}, separators=(",", ":")))
+          PY
+
+  rescue-canary:
+    needs: rescue-plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.rescue-plan.outputs.canary) }}
+    steps:
+      - name: Checkout rescue code
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+      - name: Download one existing immutable shard read-only
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Extract lossless compact fragment
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf -v start "%06d" "${{ matrix.start }}"
+          printf -v stop "%06d" "${{ matrix.stop }}"
+          expected="atolia_v3_canonical_${start}_${stop}.nc"
+          shard="$(find /tmp/atolia_v3_source -type f -name "$expected" -print -quit)"
+          test -n "$shard"
+          mkdir -p /tmp/atolia_v3_fragment
+          out="/tmp/atolia_v3_fragment/atolia_v3_canonical_${start}_${stop}.fragment.json"
+          python src/atolia/v3_phase07_fragment.py \
+            --shard "$shard" \
+            --out "$out" \
+            --start ${{ matrix.start }} \
+            --stop ${{ matrix.stop }} \
+            --population-cells "$POPULATION_CELLS" \
+            --chunk-cells "$CHUNK_CELLS" \
+            --source-run-id "$SOURCE_RUN_ID" \
+            --source-artifact "atolia-v3-canonical-shard-${{ matrix.ordinal }}"
+          test -s "$out"
+      - name: Upload recovered compact fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-fragment-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_fragment/*.fragment.json
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
+      - name: Remove only the runner-local downloaded copy
+        if: always()
+        run: rm -rf /tmp/atolia_v3_source
+
+  canary-verify:
+    needs: rescue-canary
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout rescue code
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Atolia dependencies
+        run: python -m pip install -r requirements-atolia.txt
+      - name: Download only recovered canary fragments
+        uses: actions/download-artifact@v4
+        with:
+          pattern: atolia-v3-canonical-fragment-*
+          path: /tmp/atolia_v3_fragments
+          merge-multiple: true
+      - name: Validate canary fragment identities
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'src/atolia')
+          import v3_phase07_fragment as f
+          paths = sorted(Path('/tmp/atolia_v3_fragments').glob('*.fragment.json'))
+          assert len(paths) == 3, paths
+          rows = [f.read_fragment(path) for path in paths]
+          assert sorted(int(row['chunk_ordinal']) for row in rows) == [0, 1, 2]
+          assert len({row['world_build_id'] for row in rows}) == 1
+          assert all(row['source'].get('run_id') == '33305458675' for row in rows)
+          assert all(row['source'].get('mode') == 'read-only-artifact-recovery' for row in rows)
+          print([(row['chunk_ordinal'], row['fragment_sha256']) for row in rows])
+          PY
+
+  rescue-wave0:
+    if: contains(github.event.head_commit.message, '[phase07-rescue-full]')
+    needs: [rescue-plan, canary-verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.rescue-plan.outputs.wave0) }}
+    steps: &extract_steps
+      - name: Checkout rescue code
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+      - name: Download one existing immutable shard read-only
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Extract lossless compact fragment
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf -v start "%06d" "${{ matrix.start }}"
+          printf -v stop "%06d" "${{ matrix.stop }}"
+          expected="atolia_v3_canonical_${start}_${stop}.nc"
+          shard="$(find /tmp/atolia_v3_source -type f -name "$expected" -print -quit)"
+          test -n "$shard"
+          mkdir -p /tmp/atolia_v3_fragment
+          out="/tmp/atolia_v3_fragment/atolia_v3_canonical_${start}_${stop}.fragment.json"
+          python src/atolia/v3_phase07_fragment.py \
+            --shard "$shard" \
+            --out "$out" \
+            --start ${{ matrix.start }} \
+            --stop ${{ matrix.stop }} \
+            --population-cells "$POPULATION_CELLS" \
+            --chunk-cells "$CHUNK_CELLS" \
+            --source-run-id "$SOURCE_RUN_ID" \
+            --source-artifact "atolia-v3-canonical-shard-${{ matrix.ordinal }}"
+          test -s "$out"
+      - name: Upload recovered compact fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-fragment-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_fragment/*.fragment.json
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
+      - name: Remove only the runner-local downloaded copy
+        if: always()
+        run: rm -rf /tmp/atolia_v3_source
+
+  rescue-wave1:
+    if: contains(github.event.head_commit.message, '[phase07-rescue-full]')
+    needs: [rescue-plan, canary-verify, rescue-wave0]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.rescue-plan.outputs.wave1) }}
+    steps: *extract_steps
+
+  rescue-wave2:
+    if: contains(github.event.head_commit.message, '[phase07-rescue-full]')
+    needs: [rescue-plan, canary-verify, rescue-wave0, rescue-wave1]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.rescue-plan.outputs.wave2) }}
+    steps: *extract_steps
+
+  rescue-manifest:
+    if: ${{ contains(github.event.head_commit.message, '[phase07-rescue-full]') && always() && needs.rescue-canary.result == 'success' && needs.rescue-wave0.result == 'success' && needs.rescue-wave1.result == 'success' && needs.rescue-wave2.result == 'success' }}
+    needs: [rescue-canary, rescue-wave0, rescue-wave1, rescue-wave2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout rescue code
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: python -m pip install -r requirements-atolia.txt
+      - name: Download compact fragments only
+        uses: actions/download-artifact@v4
+        with:
+          pattern: atolia-v3-canonical-fragment-*
+          path: /tmp/atolia_v3_fragments
+          merge-multiple: true
+      - name: Assemble canonical root without shard fan-in
+        run: |
+          mkdir -p /tmp/atolia_v3_manifest
+          python src/atolia/v3_phase07_assemble_fragments.py \
+            --fragment-dir /tmp/atolia_v3_fragments \
+            --out /tmp/atolia_v3_manifest/manifest.nc \
+            --population-cells "$POPULATION_CELLS" \
+            --chunk-cells "$CHUNK_CELLS" \
+            | tee /tmp/atolia_v3_manifest/summary.json
+      - name: Validate recovered canonical root
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, 'src/atolia')
+          import v3_phase07_manifest as m
+          x = m.read_manifest('/tmp/atolia_v3_manifest/manifest.nc')
+          assert x['product_scope'] == 'canonical-full'
+          assert x['config']['population_cells'] == 37100
+          assert x['config']['materialized_cells'] == 37100
+          assert len(x['shards']) == 580
+          assert x['shards'][0]['global_cell_start'] == 0
+          assert x['shards'][-1]['global_cell_stop'] == 37100
+          print(x['world_build_id'])
+          print(x['phase07_manifest_sha256'])
+          print(x['totals'])
+          PY
+      - name: Upload recovered canonical root
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-manifest-recovered
+          path: /tmp/atolia_v3_manifest
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
