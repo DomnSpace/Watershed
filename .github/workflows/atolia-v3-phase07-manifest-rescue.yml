@@ -23,6 +23,7 @@ concurrency:
 env:
   SOURCE_RUN_ID: "33305458675"
   SOURCE_COMMIT: "29ac8cb5ea80f7d63631b153c27fce30efcb0bac"
+  RECOVERED_FRAGMENT_RUN_ID: "33355983850"
   POPULATION_CELLS: "37100"
   CHUNK_CELLS: "64"
 
@@ -45,7 +46,7 @@ jobs:
         run: pytest -q tests/test_v3_phase07_canonical.py tests/test_v3_phase07_durable.py
 
   rescue-plan:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[phase07-rescue-full]')
     needs: unit-gate
     runs-on: ubuntu-24.04
     outputs:
@@ -318,7 +319,7 @@ jobs:
           if-no-files-found: error
 
   manifest-only:
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[phase07-manifest-only]')) }}
     needs: unit-gate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -340,7 +341,7 @@ jobs:
           merge-multiple: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.fragment_run_id }}
+          run-id: ${{ github.event_name == 'workflow_dispatch' && inputs.fragment_run_id || env.RECOVERED_FRAGMENT_RUN_ID }}
       - name: Preflight and assemble canonical root without shard fan-in
         shell: bash
         run: |
