@@ -10,6 +10,8 @@ if str(ATOLIA) not in sys.path:
     sys.path.insert(0, str(ATOLIA))
 
 import v3_phase07_assemble as assemble
+import v3_phase07_assemble_fragments as assemble_fragments
+import v3_phase07_fragment as fragment_io
 import v3_phase07_manifest as manifest
 import v3_phase07_shard as shard
 
@@ -41,16 +43,20 @@ def test_independent_workers_assemble_without_rebuilding_world(tmp_path: Path) -
 
     for result in (first, second):
         path = Path(result["path"])
+        fragment_path = Path(result["fragment"]["path"])
         assert path.is_file()
+        assert fragment_path.is_file()
         assert result["shard"]["chunk_sha256"]
+        checked_fragment = fragment_io.read_fragment(fragment_path)
+        assert checked_fragment["record"]["chunk_sha256"] == result["shard"]["chunk_sha256"]
 
     # world_build_id intentionally excludes population/chunk storage coordinates,
     # so these independently produced first-two shards can be assembled as a
     # 32-cell noncanonical test product without constructing a world in this step.
-    result = assemble.assemble_shards(
+    raw_result = assemble.assemble_shards(
         hypothesis,
         shard_dir=shard_dir,
-        out_path=tmp_path / "manifest.nc",
+        out_path=tmp_path / "manifest-direct.nc",
         population_cells=32,
         chunk_cells=16,
         world_seed=1300,
@@ -58,12 +64,81 @@ def test_independent_workers_assemble_without_rebuilding_world(tmp_path: Path) -
         steps=2,
         nodes=12,
     )
-    assert result["runner"]["assembly_only"] is True
-    assert result["runner"]["shards"] == 2
-    assert result["roundtrip"]["global_cell_coverage_closed"] is True
-    read = manifest.read_manifest(tmp_path / "manifest.nc")
+    fragment_result = assemble_fragments.assemble_fragments(
+        hypothesis,
+        fragment_dir=shard_dir,
+        out_path=tmp_path / "manifest-fragments.nc",
+        population_cells=32,
+        chunk_cells=16,
+        world_seed=1300,
+        workshops=320,
+        steps=2,
+        nodes=12,
+    )
+    assert raw_result["runner"]["assembly_only"] is True
+    assert raw_result["runner"]["shards"] == 2
+    assert raw_result["roundtrip"]["global_cell_coverage_closed"] is True
+    assert fragment_result["runner"]["assembly_only"] is True
+    assert fragment_result["runner"]["source_kind"] == "lossless-manifest-fragments"
+    assert (
+        raw_result["canonical_full"]["phase07_manifest_sha256"]
+        == fragment_result["canonical_full"]["phase07_manifest_sha256"]
+    )
+    read = manifest.read_manifest(tmp_path / "manifest-fragments.nc")
     assert len(read["shards"]) == 2
     assert read["config"]["materialized_cells"] == 32
+
+
+def test_fragment_hash_rejects_tampering(tmp_path: Path) -> None:
+    path = tmp_path / "fragment.json"
+    payload = {
+        "schema": fragment_io.FRAGMENT_SCHEMA,
+        "hash_policy": fragment_io.FRAGMENT_HASH_POLICY,
+        "world_build_id": "world",
+        "chunk_ordinal": 0,
+        "global_cell_start": 0,
+        "global_cell_stop": 1,
+        "shard_name": "x.nc",
+        "record": {
+            "world_build_id": "world",
+            "shard_name": "x.nc",
+            "chunk_ordinal": 0,
+            "global_cell_start": 0,
+            "global_cell_stop": 1,
+            "cell_count": 1,
+            "loss_strata": 0,
+            "particles": 0,
+            "batches": 0,
+            "operations": 0,
+            "external_exchange_tails": 0,
+            "deposition_assignments": 0,
+            "archaeology_rows": 0,
+            "phase01_spine_sha256": "1",
+            "phase02_biography_sha256": "2",
+            "phase03_metallurgy_sha256": "3",
+            "phase04_workshop_sha256": "4",
+            "phase05_sha256": "5",
+        },
+        "flow_summary": {},
+        "static_workshop_signature": "w",
+        "hydro_realization_signature": "h",
+        "deposition_pools": [],
+        "tool_use": [],
+        "source": {},
+    }
+    payload["record"]["chunk_sha256"] = manifest.chunk_hash(payload["record"])
+    payload["fragment_sha256"] = fragment_io._fragment_hash(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    fragment_io.read_fragment(path)
+
+    payload["global_cell_stop"] = 2
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    try:
+        fragment_io.read_fragment(path)
+    except RuntimeError as exc:
+        assert "fragment hash mismatch" in str(exc)
+    else:
+        raise AssertionError("tampered fragment unexpectedly validated")
 
 
 def test_manifest_world_identity_ignores_chunk_size() -> None:
