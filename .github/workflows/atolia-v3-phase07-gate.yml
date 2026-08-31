@@ -126,6 +126,15 @@ jobs:
             --out-dir /tmp/atolia_v3_shard \
             | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
 
+      - name: Upload manifest fragment immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-fragment-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_shard/*.fragment.json
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
+
       - name: Upload canary shard immediately
         uses: actions/upload-artifact@v4
         with:
@@ -166,6 +175,14 @@ jobs:
             --expected-population 37100 \
             --out-dir /tmp/atolia_v3_shard \
             | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
+      - name: Upload manifest fragment immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-fragment-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_shard/*.fragment.json
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
       - name: Upload shard immediately
         uses: actions/upload-artifact@v4
         with:
@@ -206,6 +223,14 @@ jobs:
             --expected-population 37100 \
             --out-dir /tmp/atolia_v3_shard \
             | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
+      - name: Upload manifest fragment immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-fragment-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_shard/*.fragment.json
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
       - name: Upload shard immediately
         uses: actions/upload-artifact@v4
         with:
@@ -246,6 +271,14 @@ jobs:
             --expected-population 37100 \
             --out-dir /tmp/atolia_v3_shard \
             | tee /tmp/atolia_v3_shard/worker-${{ matrix.ordinal }}.json
+      - name: Upload manifest fragment immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-fragment-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_shard/*.fragment.json
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
       - name: Upload shard immediately
         uses: actions/upload-artifact@v4
         with:
@@ -259,7 +292,7 @@ jobs:
     if: ${{ always() && needs.durable-canary.result == 'success' && needs.durable-wave0.result == 'success' && needs.durable-wave1.result == 'success' && needs.durable-wave2.result == 'success' }}
     needs: [durable-plan, durable-canary, durable-wave0, durable-wave1, durable-wave2]
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -275,18 +308,18 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-atolia.txt
 
-      - name: Download all immutable shards
+      - name: Download compact validated fragments only
         uses: actions/download-artifact@v4
         with:
-          pattern: atolia-v3-canonical-shard-*
-          path: /tmp/atolia_v3_shards
+          pattern: atolia-v3-canonical-fragment-*
+          path: /tmp/atolia_v3_fragments
           merge-multiple: true
 
-      - name: Assemble canonical manifest without rebuilding world
+      - name: Assemble canonical manifest from fragments
         run: |
           mkdir -p /tmp/atolia_v3_manifest
-          python src/atolia/v3_phase07_assemble.py \
-            --shard-dir /tmp/atolia_v3_shards \
+          python src/atolia/v3_phase07_assemble_fragments.py \
+            --fragment-dir /tmp/atolia_v3_fragments \
             --out /tmp/atolia_v3_manifest/manifest.nc \
             --population-cells 37100 \
             --chunk-cells 64 \
@@ -316,5 +349,5 @@ jobs:
           name: atolia-v3-canonical-manifest
           path: /tmp/atolia_v3_manifest
           compression-level: 0
-          retention-days: 7
+          retention-days: 90
           if-no-files-found: error
