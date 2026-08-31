@@ -1,0 +1,135 @@
+name: Atolia v3 phase-07 signature census
+
+on:
+  push:
+    branches:
+      - atolia-v3-07-manifest-rescue
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase07-signature-census
+  cancel-in-progress: false
+
+env:
+  RECOVERED_FRAGMENT_RUN_ID: "33355983850"
+  POPULATION_CELLS: "37100"
+  CHUNK_CELLS: "64"
+
+jobs:
+  census:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase07-signature-census]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download all recovered compact fragments
+        uses: actions/download-artifact@v6
+        with:
+          pattern: atolia-v3-canonical-fragment-*
+          path: /tmp/atolia_v3_fragments
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.RECOVERED_FRAGMENT_RUN_ID }}
+
+      - name: Census static, hydro and pool-realization identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from collections import defaultdict
+          from pathlib import Path
+          import json
+          import math
+          import os
+
+          root = Path('/tmp/atolia_v3_fragments')
+          population = int(os.environ['POPULATION_CELLS'])
+          chunk = int(os.environ['CHUNK_CELLS'])
+          expected = math.ceil(population / chunk)
+          paths = sorted(root.glob('*.fragment.json'))
+          if len(paths) != expected:
+              raise RuntimeError(f'expected {expected} fragments, found {len(paths)}')
+
+          workshop = defaultdict(list)
+          hydro = defaultdict(list)
+          pool_hydro = defaultdict(list)
+          worlds = defaultdict(list)
+          ranges = []
+
+          for path in paths:
+              frag = json.loads(path.read_text(encoding='utf-8'))
+              ordinal = int(frag['chunk_ordinal'])
+              start = int(frag['global_cell_start'])
+              stop = int(frag['global_cell_stop'])
+              ranges.append((ordinal, start, stop, path.name))
+              worlds[str(frag['world_build_id'])].append(ordinal)
+              workshop[str(frag['static_workshop_signature'])].append(ordinal)
+              hydro[str(frag['hydro_realization_signature'])].append(ordinal)
+              ids = {str(row['hydro_realization_id']) for row in frag.get('deposition_pools', [])}
+              for rid in ids:
+                  pool_hydro[rid].append(ordinal)
+
+          ranges.sort()
+          expected_ranges = [
+              (ordinal, ordinal * chunk, min(population, ordinal * chunk + chunk))
+              for ordinal in range(expected)
+          ]
+          actual_ranges = [(o, s, e) for o, s, e, _ in ranges]
+          if actual_ranges != expected_ranges:
+              raise RuntimeError('fragment ordinal/range coverage differs from canonical plan')
+
+          def summarize(mapping):
+              rows = []
+              for signature, ordinals in mapping.items():
+                  ordered = sorted(ordinals)
+                  rows.append({
+                      'signature': signature,
+                      'fragment_count': len(ordered),
+                      'first_ordinal': ordered[0],
+                      'last_ordinal': ordered[-1],
+                      'sample_ordinals': ordered[:16],
+                  })
+              rows.sort(key=lambda row: (-row['fragment_count'], row['first_ordinal'], row['signature']))
+              return rows
+
+          report = {
+              'schema': 'atolia-v3-phase07-global-signature-census-v1',
+              'fragment_count': len(paths),
+              'coverage': [0, population],
+              'world_build_ids': summarize(worlds),
+              'static_workshop_signatures': summarize(workshop),
+              'hydro_realization_signatures': summarize(hydro),
+              'deposition_pool_hydro_realization_ids': summarize(pool_hydro),
+              'counts': {
+                  'world_build_ids': len(worlds),
+                  'static_workshop_signatures': len(workshop),
+                  'hydro_realization_signatures': len(hydro),
+                  'deposition_pool_hydro_realization_ids': len(pool_hydro),
+              },
+          }
+          out = Path('/tmp/atolia_v3_signature_census.json')
+          out.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps(report, indent=2, sort_keys=True))
+
+          if len(worlds) != 1:
+              raise RuntimeError(f'world-build identity split across fragments: {len(worlds)}')
+          if len(workshop) != 1 or len(hydro) != 1 or len(pool_hydro) != 1:
+              raise RuntimeError(
+                  'global truth differs across independently built shards: '
+                  f'workshop={len(workshop)}, hydro_signature={len(hydro)}, '
+                  f'pool_hydro_realization={len(pool_hydro)}'
+              )
+          PY
+
+      - name: Upload census even when invariant fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase07-signature-census
+          path: /tmp/atolia_v3_signature_census.json
+          retention-days: 90
+          if-no-files-found: warn
