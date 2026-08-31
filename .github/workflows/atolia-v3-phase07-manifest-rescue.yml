@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - atolia-v3-07-manifest-rescue
+  workflow_dispatch:
+    inputs:
+      fragment_run_id:
+        description: Actions run containing all recovered compact fragments
+        required: true
+        default: "33355983850"
+        type: string
 
 permissions:
   contents: read
@@ -38,6 +45,7 @@ jobs:
         run: pytest -q tests/test_v3_phase07_canonical.py tests/test_v3_phase07_durable.py
 
   rescue-plan:
+    if: github.event_name == 'push'
     needs: unit-gate
     runs-on: ubuntu-24.04
     outputs:
@@ -71,6 +79,7 @@ jobs:
           PY
 
   rescue-canary:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[phase07-rescue-full]')
     needs: rescue-plan
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -167,7 +176,7 @@ jobs:
           PY
 
   rescue-wave0:
-    if: contains(github.event.head_commit.message, '[phase07-rescue-full]')
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[phase07-rescue-full]')
     needs: [rescue-plan, canary-verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -229,7 +238,7 @@ jobs:
         run: rm -rf /tmp/atolia_v3_source
 
   rescue-wave1:
-    if: contains(github.event.head_commit.message, '[phase07-rescue-full]')
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[phase07-rescue-full]')
     needs: [rescue-plan, canary-verify, rescue-wave0]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -240,7 +249,7 @@ jobs:
     steps: *extract_steps
 
   rescue-wave2:
-    if: contains(github.event.head_commit.message, '[phase07-rescue-full]')
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[phase07-rescue-full]')
     needs: [rescue-plan, canary-verify, rescue-wave0, rescue-wave1]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -251,7 +260,7 @@ jobs:
     steps: *extract_steps
 
   rescue-manifest:
-    if: ${{ contains(github.event.head_commit.message, '[phase07-rescue-full]') && always() && needs.rescue-canary.result == 'success' && needs.rescue-wave0.result == 'success' && needs.rescue-wave1.result == 'success' && needs.rescue-wave2.result == 'success' }}
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[phase07-rescue-full]') && always() && needs.rescue-canary.result == 'success' && needs.rescue-wave0.result == 'success' && needs.rescue-wave1.result == 'success' && needs.rescue-wave2.result == 'success' }}
     needs: [rescue-canary, rescue-wave0, rescue-wave1, rescue-wave2]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -271,8 +280,71 @@ jobs:
           pattern: atolia-v3-canonical-fragment-*
           path: /tmp/atolia_v3_fragments
           merge-multiple: true
-      - name: Assemble canonical root without shard fan-in
+      - name: Preflight and assemble canonical root without shard fan-in
+        shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p /tmp/atolia_v3_manifest
+          python src/atolia/v3_phase07_assemble_fragments.py \
+            --fragment-dir /tmp/atolia_v3_fragments \
+            --out /tmp/atolia_v3_manifest/manifest.nc \
+            --population-cells "$POPULATION_CELLS" \
+            --chunk-cells "$CHUNK_CELLS" \
+            | tee /tmp/atolia_v3_manifest/summary.json
+      - name: Validate recovered canonical root
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, 'src/atolia')
+          import v3_phase07_manifest as m
+          x = m.read_manifest('/tmp/atolia_v3_manifest/manifest.nc')
+          assert x['product_scope'] == 'canonical-full'
+          assert x['config']['population_cells'] == 37100
+          assert x['config']['materialized_cells'] == 37100
+          assert len(x['shards']) == 580
+          assert x['shards'][0]['global_cell_start'] == 0
+          assert x['shards'][-1]['global_cell_stop'] == 37100
+          print(x['world_build_id'])
+          print(x['phase07_manifest_sha256'])
+          print(x['totals'])
+          PY
+      - name: Upload recovered canonical root
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-canonical-manifest-recovered
+          path: /tmp/atolia_v3_manifest
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+
+  manifest-only:
+    if: github.event_name == 'workflow_dispatch'
+    needs: unit-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout rescue code
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: python -m pip install -r requirements-atolia.txt
+      - name: Download recovered compact fragments from selected run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: atolia-v3-canonical-fragment-*
+          path: /tmp/atolia_v3_fragments
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.fragment_run_id }}
+      - name: Preflight and assemble canonical root without shard fan-in
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p /tmp/atolia_v3_manifest
           python src/atolia/v3_phase07_assemble_fragments.py \
             --fragment-dir /tmp/atolia_v3_fragments \
