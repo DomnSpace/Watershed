@@ -28,8 +28,178 @@ import v3_phase07_fragment as fragment_io
 import v3_phase07_manifest as manifest
 
 
+POOL_IDENTITY_FIELDS = ("node_id", "date_bc", "mode", "hydro_realization_id")
+
+
 def fragment_name(start: int, stop: int) -> str:
     return f"atolia_v3_canonical_{int(start):06d}_{int(stop):06d}.fragment.json"
+
+
+def preflight_fragments(
+    fragment_dir: Path,
+    *,
+    population_cells: int,
+    chunk_cells: int,
+    expected_world_build_id: str | None = None,
+) -> list[tuple[Path, dict[str, Any]]]:
+    """Validate the entire compact-fragment set before any global merge begins."""
+    population = int(population_cells)
+    chunk = int(chunk_cells)
+    if population <= 0 or chunk <= 0:
+        raise ValueError("population_cells and chunk_cells must be positive")
+
+    fragment_dir = Path(fragment_dir)
+    expected_shards = int(math.ceil(population / chunk))
+    paths = sorted(fragment_dir.rglob("*.fragment.json"))
+    if len(paths) != expected_shards:
+        raise RuntimeError(
+            f"phase-07 fragment preflight expected {expected_shards} fragments, found {len(paths)}"
+        )
+
+    by_ordinal: dict[int, tuple[Path, dict[str, Any]]] = {}
+    by_range: dict[tuple[int, int], Path] = {}
+    by_hash: dict[str, Path] = {}
+    world_ids: set[str] = set()
+
+    for path in paths:
+        frag = fragment_io.read_fragment(path)
+        ordinal = int(frag["chunk_ordinal"])
+        start = int(frag["global_cell_start"])
+        stop = int(frag["global_cell_stop"])
+        digest = str(frag["fragment_sha256"])
+        world_id = str(frag["world_build_id"])
+        record = frag["record"]
+
+        if ordinal < 0 or ordinal >= expected_shards:
+            raise RuntimeError(f"fragment {path.name} has out-of-plan ordinal {ordinal}")
+        if not (0 <= start < stop <= population):
+            raise RuntimeError(f"fragment {path.name} has invalid cell range {start}:{stop}")
+        expected_start = ordinal * chunk
+        expected_stop = min(population, expected_start + chunk)
+        if (start, stop) != (expected_start, expected_stop):
+            raise RuntimeError(
+                f"fragment {path.name} range {start}:{stop} does not match ordinal {ordinal} "
+                f"plan {expected_start}:{expected_stop}"
+            )
+        expected_name = fragment_name(expected_start, expected_stop)
+        if path.name != expected_name:
+            raise RuntimeError(f"fragment ordinal {ordinal} has unexpected filename {path.name}")
+        expected_shard_name = f"atolia_v3_canonical_{expected_start:06d}_{expected_stop:06d}.nc"
+        if str(frag.get("shard_name")) != expected_shard_name:
+            raise RuntimeError(f"fragment {path.name} envelope shard name does not match canonical plan")
+        if str(record.get("shard_name")) != expected_shard_name:
+            raise RuntimeError(f"fragment {path.name} record shard name does not match canonical plan")
+        if int(record.get("cell_count", -1)) != stop - start:
+            raise RuntimeError(f"fragment {path.name} cell_count does not match its range")
+        if ordinal in by_ordinal:
+            raise RuntimeError(
+                f"duplicate fragment ordinal {ordinal}: {by_ordinal[ordinal][0].name} and {path.name}"
+            )
+        if (start, stop) in by_range:
+            raise RuntimeError(
+                f"duplicate fragment range {start}:{stop}: {by_range[(start, stop)].name} and {path.name}"
+            )
+        if digest in by_hash:
+            raise RuntimeError(
+                f"duplicate fragment hash {digest}: {by_hash[digest].name} and {path.name}"
+            )
+
+        by_ordinal[ordinal] = (path, frag)
+        by_range[(start, stop)] = path
+        by_hash[digest] = path
+        world_ids.add(world_id)
+
+    missing_ordinals = [ordinal for ordinal in range(expected_shards) if ordinal not in by_ordinal]
+    if missing_ordinals:
+        raise RuntimeError(f"phase-07 fragment preflight missing ordinals {missing_ordinals}")
+    if len(world_ids) != 1:
+        raise RuntimeError(f"phase-07 fragment preflight found {len(world_ids)} world identities")
+    only_world_id = next(iter(world_ids))
+    if expected_world_build_id is not None and only_world_id != str(expected_world_build_id):
+        raise RuntimeError("phase-07 fragment set belongs to a different canonical world")
+
+    ordered = [by_ordinal[ordinal] for ordinal in range(expected_shards)]
+    previous_stop = 0
+    for ordinal, (path, frag) in enumerate(ordered):
+        start = int(frag["global_cell_start"])
+        stop = int(frag["global_cell_stop"])
+        if start != previous_stop:
+            raise RuntimeError(
+                f"phase-07 fragment coverage gap/overlap before ordinal {ordinal}: "
+                f"expected start {previous_stop}, got {start} ({path.name})"
+            )
+        previous_stop = stop
+    if previous_stop != population:
+        raise RuntimeError(
+            f"phase-07 fragment coverage ends at {previous_stop}, expected {population}"
+        )
+
+    print(
+        json.dumps(
+            {
+                "phase07_fragment_preflight": {
+                    "count": len(ordered),
+                    "expected_count": expected_shards,
+                    "coverage": [0, population],
+                    "world_build_id": only_world_id,
+                    "first_fragment": ordered[0][0].name,
+                    "last_fragment": ordered[-1][0].name,
+                }
+            },
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+    return ordered
+
+
+def _pool_origin(path: Path, frag: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "fragment": path.name,
+        "chunk_ordinal": int(frag["chunk_ordinal"]),
+        "global_cell_start": int(frag["global_cell_start"]),
+        "global_cell_stop": int(frag["global_cell_stop"]),
+    }
+
+
+def _merge_pool_with_diagnostics(
+    aggregate: dict[str, dict[str, Any]],
+    origins: dict[str, tuple[dict[str, Any], dict[str, Any]]],
+    row: Mapping[str, Any],
+    *,
+    path: Path,
+    frag: Mapping[str, Any],
+) -> None:
+    """Merge one pool row, emitting the exact conflicting pair on identity collision."""
+    pid = str(row["deposition_pool_id"])
+    current_row = dict(row)
+    current_origin = _pool_origin(path, frag)
+    if pid in aggregate:
+        dst = aggregate[pid]
+        differing = [field for field in POOL_IDENTITY_FIELDS if str(dst[field]) != str(row[field])]
+        if differing:
+            first_origin, first_row = origins[pid]
+            diagnostic = {
+                "error": "global_deposition_pool_identity_collision",
+                "deposition_pool_id": pid,
+                "differing_identity_fields": differing,
+                "first": {"source_fragment": first_origin, "record": first_row},
+                "second": {"source_fragment": current_origin, "record": current_row},
+            }
+            print(
+                "PHASE07_DEPOSITION_POOL_COLLISION\n"
+                + json.dumps(diagnostic, indent=2, sort_keys=True, allow_nan=False),
+                file=sys.stderr,
+                flush=True,
+            )
+            raise RuntimeError(
+                f"global deposition pool identity collision for {pid}; differing fields: "
+                + ", ".join(differing)
+            )
+    else:
+        origins[pid] = (current_origin, current_row)
+    canonical._merge_pool(aggregate, row)
 
 
 def assemble_fragments(
@@ -61,22 +231,24 @@ def assemble_fragments(
     )
     build_id = manifest.world_build_id(config)
     fragment_dir = Path(fragment_dir)
+    fragments = preflight_fragments(
+        fragment_dir,
+        population_cells=population,
+        chunk_cells=chunk,
+        expected_world_build_id=build_id,
+    )
 
     shard_records: list[dict[str, Any]] = []
     pool_aggregate: dict[str, dict[str, Any]] = {}
+    pool_origins: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     tool_aggregate: dict[str, dict[str, Any]] = {}
     workshop_signatures: set[str] = set()
     hydro_signatures: set[str] = set()
     fragment_hashes: list[str] = []
 
-    expected_shards = int(math.ceil(population / chunk))
-    for ordinal in range(expected_shards):
+    for ordinal, (path, frag) in enumerate(fragments):
         start = ordinal * chunk
         stop = min(population, start + chunk)
-        path = fragment_dir / fragment_name(start, stop)
-        if not path.is_file():
-            raise FileNotFoundError(f"missing canonical fragment {path.name}")
-        frag = fragment_io.read_fragment(path)
         record = dict(frag["record"])
         expected_shard_name = f"atolia_v3_canonical_{start:06d}_{stop:06d}.nc"
         if str(frag["world_build_id"]) != build_id:
@@ -96,7 +268,13 @@ def assemble_fragments(
         workshop_signatures.add(record["_static_workshop_signature"])
         hydro_signatures.add(record["_hydro_signature"])
         for row in frag["deposition_pools"]:
-            canonical._merge_pool(pool_aggregate, row)
+            _merge_pool_with_diagnostics(
+                pool_aggregate,
+                pool_origins,
+                row,
+                path=path,
+                frag=frag,
+            )
         for row in frag["tool_use"]:
             canonical._merge_tool_use(tool_aggregate, row)
         shard_records.append(record)
