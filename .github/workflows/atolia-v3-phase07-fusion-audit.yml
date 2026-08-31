@@ -1,0 +1,235 @@
+name: Atolia v3 phase-07 hydro fusion audit
+
+on:
+  push:
+    branches:
+      - atolia-v3-07-manifest-rescue
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RECOVERED_FRAGMENT_RUN_ID: "33355983850"
+  HYDRO_COMPARE_RUN_ID: "33395627164"
+
+jobs:
+  audit:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase07-fusion-audit]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download all recovered compact fragments
+        uses: actions/download-artifact@v6
+        with:
+          pattern: atolia-v3-canonical-fragment-*
+          path: /tmp/atolia_v3_fragments
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.RECOVERED_FRAGMENT_RUN_ID }}
+
+      - name: Download representative hydro snapshots
+        uses: actions/download-artifact@v6
+        with:
+          pattern: phase07-hydro-snapshot-*
+          path: /tmp/atolia_v3_hydro_snapshots
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.HYDRO_COMPARE_RUN_ID }}
+
+      - name: Audit topology boundary and downstream impact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from collections import defaultdict
+          from pathlib import Path
+          import json
+          import math
+
+          snaps = sorted(Path('/tmp/atolia_v3_hydro_snapshots').glob('hydro-*.json'))
+          if len(snaps) != 2:
+              raise RuntimeError(f'expected 2 hydro snapshots, found {len(snaps)}')
+          rows = [json.loads(p.read_text(encoding='utf-8')) for p in snaps]
+          rows.sort(key=lambda x: int(x['chunk_ordinal']))
+          a, b = rows
+
+          if a['world_build_id'] != b['world_build_id']:
+              raise RuntimeError('representative shards belong to different world_build_id')
+
+          def by_id(seq, key):
+              return {str(r[key]): r for r in seq}
+          def context(realization):
+              vals = defaultdict(list)
+              for r in realization:
+                  if not bool(r['realized']):
+                      continue
+                  vals[str(r['a'])].append(float(r['navigability']))
+                  vals[str(r['b'])].append(float(r['navigability']))
+              return {n: sum(v)/len(v) for n, v in vals.items() if v}
+
+          ev_a = by_id(a['hydro_evidence'], 'evidence_id')
+          ev_b = by_id(b['hydro_evidence'], 'evidence_id')
+          en_a = by_id(a['hydro_ensemble'], 'edge_id')
+          en_b = by_id(b['hydro_ensemble'], 'edge_id')
+          re_a = by_id(a['hydro_realization'], 'edge_id')
+          re_b = by_id(b['hydro_realization'], 'edge_id')
+
+          common = sorted(set(en_a) & set(en_b))
+          only_a = sorted(set(en_a) - set(en_b))
+          only_b = sorted(set(en_b) - set(en_a))
+          common_exact_except_realization_id = True
+          common_realized_equal = True
+          common_numeric_max_delta = {'probability': 0.0, 'navigability': 0.0, 'draw': 0.0}
+          for edge_id in common:
+              ea, eb = en_a[edge_id], en_b[edge_id]
+              ra, rb = re_a[edge_id], re_b[edge_id]
+              for field in ('a','b','mode','structural','evidence_ids','empirical_evidence_count','probability_basis'):
+                  if ea[field] != eb[field]:
+                      common_exact_except_realization_id = False
+              for field in ('a','b','mode','structural','realized'):
+                  if ra[field] != rb[field]:
+                      common_exact_except_realization_id = False
+              if bool(ra['realized']) != bool(rb['realized']):
+                  common_realized_equal = False
+              for field in ('probability','navigability'):
+                  common_numeric_max_delta[field] = max(common_numeric_max_delta[field], abs(float(ea[field])-float(eb[field])))
+              common_numeric_max_delta['draw'] = max(common_numeric_max_delta['draw'], abs(float(ra['draw'])-float(rb['draw'])))
+
+          def boundary_row(edge_id, ensemble, realization):
+              e = ensemble[edge_id]
+              r = realization[edge_id]
+              return {
+                  'edge_id': edge_id,
+                  'a': e['a'], 'b': e['b'], 'mode': e['mode'],
+                  'structural': bool(e['structural']),
+                  'evidence_ids': list(e['evidence_ids']),
+                  'probability_basis': e['probability_basis'],
+                  'probability': float(e['probability']),
+                  'navigability': float(e['navigability']),
+                  'realized': bool(r['realized']),
+                  'draw': float(r['draw']),
+              }
+
+          boundary_a = [boundary_row(k, en_a, re_a) for k in only_a]
+          boundary_b = [boundary_row(k, en_b, re_b) for k in only_b]
+          boundary_all = boundary_a + boundary_b
+          boundary_is_provisional_tie = bool(boundary_all) and all(
+              (not r['structural'])
+              and not r['evidence_ids']
+              and r['mode'] == 'minor_channel_or_wetland_connector'
+              and r['probability_basis'] == 'provisional-short-range-water-connector-prior'
+              for r in boundary_all
+          )
+          pvals = [r['probability'] for r in boundary_all]
+          nvals = [r['navigability'] for r in boundary_all]
+          boundary_probability_span = max(pvals)-min(pvals) if pvals else 0.0
+          boundary_navigability_span = max(nvals)-min(nvals) if nvals else 0.0
+          realized_boundary_counts = [sum(r['realized'] for r in boundary_a), sum(r['realized'] for r in boundary_b)]
+
+          ca, cb = context(a['hydro_realization']), context(b['hydro_realization'])
+          affected = []
+          for node in sorted(set(ca) | set(cb)):
+              va, vb = float(ca.get(node, 0.0)), float(cb.get(node, 0.0))
+              if va != vb:
+                  affected.append({'node_id': node, 'a': va, 'b': vb, 'abs_delta': abs(va-vb)})
+          affected_nodes = {r['node_id'] for r in affected}
+
+          fragments = sorted(Path('/tmp/atolia_v3_fragments').glob('*.fragment.json'))
+          if len(fragments) != 580:
+              raise RuntimeError(f'expected 580 recovered fragments, found {len(fragments)}')
+
+          pool_variants = defaultdict(dict)
+          affected_pool_rows = []
+          hydro_fragment_counts = defaultdict(int)
+          for path in fragments:
+              frag = json.loads(path.read_text(encoding='utf-8'))
+              hydro_ids = {str(r['hydro_realization_id']) for r in frag.get('deposition_pools', [])}
+              for hid in hydro_ids:
+                  hydro_fragment_counts[hid] += 1
+              for r in frag.get('deposition_pools', []):
+                  pid = str(r['deposition_pool_id'])
+                  hid = str(r['hydro_realization_id'])
+                  ident = (str(r['node_id']), int(r['date_bc']), str(r['mode']))
+                  entry = pool_variants[pid].setdefault(hid, {'identity': ident, 'scores': []})
+                  if entry['identity'] != ident:
+                      raise RuntimeError(f'pool identity changed inside hydro variant: {pid}')
+                  entry['scores'].append(float(r['hydro_context_score']))
+                  if str(r['node_id']) in affected_nodes:
+                      affected_pool_rows.append({
+                          'fragment': path.name,
+                          'chunk_ordinal': int(frag['chunk_ordinal']),
+                          'deposition_pool_id': pid,
+                          'hydro_realization_id': hid,
+                          'node_id': str(r['node_id']),
+                          'date_bc': int(r['date_bc']),
+                          'mode': str(r['mode']),
+                          'hydro_context_score': float(r['hydro_context_score']),
+                      })
+
+          shared_pool_ids = [pid for pid, variants in pool_variants.items() if len(variants) > 1]
+          max_shared_pool_context_delta = 0.0
+          shared_identity_conflicts = []
+          for pid in shared_pool_ids:
+              variants = pool_variants[pid]
+              vals = list(variants.values())
+              if len({v['identity'] for v in vals}) != 1:
+                  shared_identity_conflicts.append(pid)
+                  continue
+              means = [sum(v['scores'])/len(v['scores']) for v in vals]
+              if means:
+                  max_shared_pool_context_delta = max(max_shared_pool_context_delta, max(means)-min(means))
+
+          report = {
+              'schema': 'atolia-v3-phase07-hydro-fusion-audit-v1',
+              'world_build_id': a['world_build_id'],
+              'evidence_ids_equal': set(ev_a) == set(ev_b),
+              'ensemble_counts': [len(en_a), len(en_b)],
+              'common_edge_count': len(common),
+              'symmetric_difference': {'only_a': len(only_a), 'only_b': len(only_b)},
+              'common_exact_except_realization_id': common_exact_except_realization_id,
+              'common_realized_equal': common_realized_equal,
+              'common_numeric_max_delta': common_numeric_max_delta,
+              'boundary_is_provisional_tie': boundary_is_provisional_tie,
+              'boundary_probability_span': boundary_probability_span,
+              'boundary_navigability_span': boundary_navigability_span,
+              'boundary_realized_counts': realized_boundary_counts,
+              'boundary_a': boundary_a,
+              'boundary_b': boundary_b,
+              'hydro_context_affected_nodes': affected,
+              'hydro_context_affected_node_count': len(affected),
+              'recovered_fragment_hydro_counts': dict(sorted(hydro_fragment_counts.items())),
+              'shared_deposition_pool_ids_across_variants': len(shared_pool_ids),
+              'shared_pool_identity_conflicts': shared_identity_conflicts,
+              'max_shared_pool_context_delta': max_shared_pool_context_delta,
+              'affected_node_deposition_pool_row_count': len(affected_pool_rows),
+              'affected_node_deposition_pool_rows': affected_pool_rows[:100],
+          }
+          report['fusion_classification'] = (
+              'safe_metadata_equivalence_fusion'
+              if (
+                  report['evidence_ids_equal']
+                  and common_exact_except_realization_id
+                  and common_realized_equal
+                  and boundary_is_provisional_tie
+                  and not shared_identity_conflicts
+                  and len(affected_pool_rows) == 0
+              )
+              else 'requires_targeted_boundary_repair'
+          )
+          out = Path('/tmp/atolia_v3_hydro_fusion_audit.json')
+          out.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload fusion audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase07-hydro-fusion-audit
+          path: /tmp/atolia_v3_hydro_fusion_audit.json
+          retention-days: 90
+          if-no-files-found: warn
