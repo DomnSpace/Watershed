@@ -1,0 +1,188 @@
+name: Atolia v3 phase-07 selective replay capsules
+
+on:
+  push:
+    branches:
+      - atolia-v3-07-manifest-rescue
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase07-selective-replay-capsules
+  cancel-in-progress: false
+
+env:
+  SOURCE_RUN_ID: "33305458675"
+  CUTOFF_PLAN_RUN_ID: "33555735512"
+
+jobs:
+  extract:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase07-replay-capsule]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - { ordinal: 507, start: 32448, stop: 32512, artifact: atolia-v3-canonical-shard-507, shard: atolia_v3_canonical_032448_032512.nc }
+          - { ordinal: 508, start: 32512, stop: 32576, artifact: atolia-v3-canonical-shard-508, shard: atolia_v3_canonical_032512_032576.nc }
+          - { ordinal: 515, start: 32960, stop: 33024, artifact: atolia-v3-canonical-shard-515, shard: atolia_v3_canonical_032960_033024.nc }
+          - { ordinal: 516, start: 33024, stop: 33088, artifact: atolia-v3-canonical-shard-516, shard: atolia_v3_canonical_033024_033088.nc }
+          - { ordinal: 564, start: 36096, stop: 36160, artifact: atolia-v3-canonical-shard-564, shard: atolia_v3_canonical_036096_036160.nc }
+          - { ordinal: 565, start: 36160, stop: 36224, artifact: atolia-v3-canonical-shard-565, shard: atolia_v3_canonical_036160_036224.nc }
+          - { ordinal: 568, start: 36352, stop: 36416, artifact: atolia-v3-canonical-shard-568, shard: atolia_v3_canonical_036352_036416.nc }
+          - { ordinal: 569, start: 36416, stop: 36480, artifact: atolia-v3-canonical-shard-569, shard: atolia_v3_canonical_036416_036480.nc }
+          - { ordinal: 577, start: 36928, stop: 36992, artifact: atolia-v3-canonical-shard-577, shard: atolia_v3_canonical_036928_036992.nc }
+    steps:
+      - name: Checkout rescue code
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Atolia dependencies
+        run: python -m pip install -r requirements-atolia.txt
+
+      - name: Download cutoff/replay plan
+        uses: actions/download-artifact@v6
+        with:
+          name: atolia-v3-phase07-cutoff-replay-plan
+          path: /tmp/atolia_v3_cutoff_plan
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.CUTOFF_PLAN_RUN_ID }}
+
+      - name: Download exact immutable source shard
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: /tmp/atolia_v3_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Extract exact counterfactual replay capsule
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLAN=/tmp/atolia_v3_cutoff_plan/atolia_v3_cutoff_replay_plan.json
+          test -f "$PLAN"
+          mapfile -t SHARDS < <(find /tmp/atolia_v3_source -type f -name '${{ matrix.shard }}' -print)
+          if [ "${#SHARDS[@]}" -ne 1 ]; then
+            echo "expected exactly one source shard ${{ matrix.shard }}, found ${#SHARDS[@]}" >&2
+            printf '%s\n' "${SHARDS[@]}" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/atolia_v3_replay
+          python src/atolia/v3_phase07_replay_capsule.py \
+            --shard "${SHARDS[0]}" \
+            --plan "$PLAN" \
+            --ordinal '${{ matrix.ordinal }}' \
+            --out '/tmp/atolia_v3_replay/replay-${{ matrix.ordinal }}.json'
+
+      - name: Upload replay capsule
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase07-replay-capsule-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_replay/replay-${{ matrix.ordinal }}.json
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Remove runner-local source copy
+        if: always()
+        shell: bash
+        run: rm -rf /tmp/atolia_v3_source
+
+  summarize:
+    if: ${{ always() && needs.extract.result == 'success' }}
+    needs: extract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download all replay capsules
+        uses: actions/download-artifact@v4
+        with:
+          pattern: phase07-replay-capsule-*
+          path: /tmp/atolia_v3_replay_capsules
+          merge-multiple: true
+
+      - name: Build exact replay summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import json
+
+          paths = sorted(Path('/tmp/atolia_v3_replay_capsules').glob('replay-*.json'))
+          if len(paths) != 9:
+              raise RuntimeError(f'expected 9 replay capsules, found {len(paths)}')
+          rows = [json.loads(p.read_text(encoding='utf-8')) for p in paths]
+          rows.sort(key=lambda r: int(r['chunk_ordinal']))
+          actions = Counter()
+          flip_rows = []
+          total_particles = 0
+          total_pools = 0
+          external_count_delta = 0
+          max_roundtrip_error = 0.0
+          for row in rows:
+              total_particles += int(row['affected_particle_count'])
+              total_pools += int(row['affected_pool_count'])
+              external_count_delta += int(row['external_exchange_count_delta'])
+              max_roundtrip_error = max(max_roundtrip_error, float(row['max_old_external_probability_roundtrip_error']))
+              actions.update({k: int(v) for k, v in row['external_actions'].items()})
+              for item in row['replay_rows']:
+                  if item['external_action'] in {'ADD', 'REMOVE'}:
+                      flip_rows.append({
+                          'chunk_ordinal': int(row['chunk_ordinal']),
+                          'particle_id': item['particle_id'],
+                          'loss_node_id': item['loss_node_id'],
+                          'action': item['external_action'],
+                          'draw': item['external_draw'],
+                          'old_probability': item['old_external_probability'],
+                          'canonical_probability': item['canonical_external_probability'],
+                          'probability_delta': item['external_probability_delta'],
+                      })
+          summary = {
+              'schema': 'atolia-v3-phase07-replay-summary-v1',
+              'capsule_count': len(rows),
+              'chunk_ordinals': [int(r['chunk_ordinal']) for r in rows],
+              'canonical_hydro_realization_id': rows[0]['canonical_hydro_realization_id'],
+              'source_hydro_realization_id': rows[0]['source_hydro_realization_id'],
+              'affected_particle_count': total_particles,
+              'affected_pool_count_sum_by_shard': total_pools,
+              'external_actions': dict(sorted(actions.items())),
+              'external_threshold_flip_count': len(flip_rows),
+              'external_exchange_count_delta': external_count_delta,
+              'max_old_external_probability_roundtrip_error': max_roundtrip_error,
+              'external_threshold_flips': flip_rows,
+              'capsules': [{
+                  'chunk_ordinal': int(r['chunk_ordinal']),
+                  'source_chunk_sha256': r['source_chunk_sha256'],
+                  'source_phase05_sha256': r['source_phase05_sha256'],
+                  'affected_particle_count': int(r['affected_particle_count']),
+                  'external_actions': r['external_actions'],
+                  'external_exchange_count_delta': int(r['external_exchange_count_delta']),
+              } for r in rows],
+          }
+          out = Path('/tmp/atolia_v3_replay_summary.json')
+          out.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload replay summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase07-replay-summary
+          path: /tmp/atolia_v3_replay_summary.json
+          retention-days: 90
+          if-no-files-found: error
