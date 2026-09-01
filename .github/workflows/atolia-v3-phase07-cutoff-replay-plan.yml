@@ -1,0 +1,103 @@
+name: Atolia v3 phase-07 cutoff replay plan
+
+on:
+  push:
+    branches:
+      - atolia-v3-07-manifest-rescue
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase07-cutoff-replay-plan
+  cancel-in-progress: false
+
+env:
+  RECOVERED_FRAGMENT_RUN_ID: "33355983850"
+  HYDRO_COMPARE_RUN_ID: "33395627164"
+
+jobs:
+  diagnose:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase07-cutoff-replay-plan]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout rescue code
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Atolia dependencies
+        run: python -m pip install -r requirements-atolia.txt
+
+      - name: Download all recovered compact fragments
+        uses: actions/download-artifact@v6
+        with:
+          pattern: atolia-v3-canonical-fragment-*
+          path: /tmp/atolia_v3_fragments
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.RECOVERED_FRAGMENT_RUN_ID }}
+
+      - name: Download representative hydro snapshots
+        uses: actions/download-artifact@v6
+        with:
+          pattern: phase07-hydro-snapshot-*
+          path: /tmp/atolia_v3_hydro_snapshots
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.HYDRO_COMPARE_RUN_ID }}
+
+      - name: Rebuild cutoff neighborhood and selective replay plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          python src/atolia/v3_phase07_cutoff_replay_plan.py \
+            --snapshots-dir /tmp/atolia_v3_hydro_snapshots \
+            --fragments-dir /tmp/atolia_v3_fragments \
+            --out /tmp/atolia_v3_cutoff_replay_plan.json \
+            --boundary-radius 30
+
+      - name: Print compact diagnostic summary
+        if: always()
+        shell: bash
+        run: |
+          if test -f /tmp/atolia_v3_cutoff_replay_plan.json; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('/tmp/atolia_v3_cutoff_replay_plan.json')
+          r = json.loads(p.read_text(encoding='utf-8'))
+          print(json.dumps({
+              'canonical_hydro_realization_id': r['observed_variants']['canonical_hydro_realization_id'],
+              'minority_hydro_realization_id': r['observed_variants']['minority_hydro_realization_id'],
+              'fragment_counts': r['observed_variants']['fragment_counts'],
+              'observed_boundary_counts': [r['observed_boundary']['only_a_count'], r['observed_boundary']['only_b_count']],
+              'affected_node_count': r['observed_boundary']['affected_node_count'],
+              'cutoff_rank_1based': r['rebuilt_cutoff']['cutoff_rank_1based'],
+              'tie_band_counts': r['rebuilt_cutoff']['tie_band_counts'],
+              'rebuilt_selected_match': r['rebuilt_cutoff']['rebuilt_selected_match'],
+              'affected_minority_shard_count': r['selective_replay']['affected_minority_shard_count'],
+              'affected_minority_shard_ordinals': r['selective_replay']['affected_minority_shard_ordinals'],
+          }, indent=2, sort_keys=True))
+          PY
+          else
+            echo 'cutoff replay report was not produced'
+          fi
+
+      - name: Upload cutoff and replay-plan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase07-cutoff-replay-plan
+          path: /tmp/atolia_v3_cutoff_replay_plan.json
+          retention-days: 90
+          if-no-files-found: warn
