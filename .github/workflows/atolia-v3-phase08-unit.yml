@@ -28,6 +28,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-atolia.txt pytest
+      - name: Compile Phase-08 projection
+        run: python -m py_compile src/atolia/v3_phase08_runtime_fragment.py
       - name: Test empirical runtime projection
         run: |
-          pytest -q tests/test_v3_phase08_runtime_fragment.py
+          pytest -q \
+            tests/test_v3_phase08_runtime_fragment.py \
+            tests/test_v3_phase07_repair.py \
+            tests/test_v3_phase07_replay_capsule.py
