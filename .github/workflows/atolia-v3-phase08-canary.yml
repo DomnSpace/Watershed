@@ -28,10 +28,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - ordinal: 2
+            capsule: false
+            expected_action: RETAIN_CANONICAL_SOURCE
           - ordinal: 0
             capsule: false
+            expected_action: PROJECT_MINORITY_TO_CANONICAL
           - ordinal: 507
             capsule: true
+            expected_action: PROJECT_MINORITY_TO_CANONICAL
     steps:
       - name: Checkout Phase-08 branch
         uses: actions/checkout@v4
@@ -122,6 +127,7 @@ jobs:
           assert row['profile_count'] > 0
           assert row['profile_count'] == len(row['profiles'])
           assert row['fragment_sha256'] == p8.fragment_hash(row)
+          assert row['recovery']['action'] == '${{ matrix.expected_action }}'
           serialized = json.dumps(row['profiles'], sort_keys=True)
           for forbidden_key in (
               'particle_id', 'loss_site_id', 'production_cell_id', 'workshop_id',
@@ -129,8 +135,9 @@ jobs:
           ):
               assert f'"{forbidden_key}"' not in serialized
           if ordinal == 507:
-              assert row['recovery']['action'] == 'PROJECT_MINORITY_TO_CANONICAL'
               assert row['recovery']['replay_capsule_sha256']
+          else:
+              assert not row['recovery']['replay_capsule_sha256']
           print({
               'ordinal': ordinal,
               'profiles': row['profile_count'],
