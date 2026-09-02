@@ -134,11 +134,16 @@ jobs:
           total_pools = 0
           external_count_delta = 0
           max_roundtrip_error = 0.0
+          max_source_plan_context_delta = 0.0
           for row in rows:
               total_particles += int(row['affected_particle_count'])
               total_pools += int(row['affected_pool_count'])
               external_count_delta += int(row['external_exchange_count_delta'])
               max_roundtrip_error = max(max_roundtrip_error, float(row['max_old_external_probability_roundtrip_error']))
+              max_source_plan_context_delta = max(
+                  max_source_plan_context_delta,
+                  float(row['max_abs_source_minus_planned_minority_context']),
+              )
               actions.update({k: int(v) for k, v in row['external_actions'].items()})
               for item in row['replay_rows']:
                   if item['external_action'] in {'ADD', 'REMOVE'}:
@@ -153,7 +158,7 @@ jobs:
                           'probability_delta': item['external_probability_delta'],
                       })
           summary = {
-              'schema': 'atolia-v3-phase07-replay-summary-v1',
+              'schema': 'atolia-v3-phase07-replay-summary-v2',
               'capsule_count': len(rows),
               'chunk_ordinals': [int(r['chunk_ordinal']) for r in rows],
               'canonical_hydro_realization_id': rows[0]['canonical_hydro_realization_id'],
@@ -164,6 +169,8 @@ jobs:
               'external_threshold_flip_count': len(flip_rows),
               'external_exchange_count_delta': external_count_delta,
               'max_old_external_probability_roundtrip_error': max_roundtrip_error,
+              'minority_context_reconciliation_policy': rows[0]['minority_context_reconciliation_policy'],
+              'max_abs_source_minus_planned_minority_context': max_source_plan_context_delta,
               'external_threshold_flips': flip_rows,
               'capsules': [{
                   'chunk_ordinal': int(r['chunk_ordinal']),

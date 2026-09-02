@@ -33,11 +33,44 @@ import v3_phase07_canonical as canonical
 import v3_phase07_manifest as manifest
 
 
-SCHEMA = "atolia-v3-phase07-replay-capsule-v1"
+SCHEMA = "atolia-v3-phase07-replay-capsule-v2"
+MINORITY_CONTEXT_RECONCILIATION_POLICY = (
+    "immutable-source-assignment-authoritative; "
+    "planned-minority-context-diagnostic-only; "
+    "phase05-canonical-float-10sig-agreement-required"
+)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _phase05_hash_float(value: float) -> float:
+    """Apply the float projection used by the frozen phase-05 hash policy."""
+    x = float(value)
+    if not math.isfinite(x):
+        raise ValueError("phase-05 replay context must be finite")
+    if x == 0.0:
+        return 0.0
+    return float(format(x, ".10g"))
+
+
+def _source_context_delta(source_value: float, planned_value: float) -> float:
+    """Validate identity at phase-05 precision while preserving source truth.
+
+    The cutoff plan carries one representative snapshot for each observed
+    realization.  Immutable shards retain their own full-precision derived
+    context.  Those values may differ below the declared phase-05 10-significant-
+    digit fingerprint without representing a different model state.
+    """
+    source = float(source_value)
+    planned = float(planned_value)
+    if _phase05_hash_float(source) != _phase05_hash_float(planned):
+        raise RuntimeError(
+            "minority hydro context differs at the frozen phase-05 hash precision: "
+            f"assignment={source!r} plan={planned!r}"
+        )
+    return source - planned
 
 
 def _external_probability(particle: Mapping[str, Any], cell: Any, water: float) -> tuple[float, str, str]:
@@ -148,6 +181,7 @@ def extract_capsule(
     actions: Counter[str] = Counter()
     pool_ids: set[str] = set()
     max_old_probability_error = 0.0
+    max_abs_source_plan_context_delta = 0.0
 
     for particle in particles:
         pid = str(particle["particle_id"])
@@ -161,11 +195,12 @@ def extract_capsule(
             raise RuntimeError(f"affected assignment is not minority hydro realization for {pid}")
 
         old_water = float(assignment["hydro_context_score"])
-        expected_old_water = float(affected[node]["minority"])
-        if abs(old_water - expected_old_water) > 5e-13:
-            raise RuntimeError(
-                f"minority hydro context mismatch for {pid}: assignment={old_water!r} plan={expected_old_water!r}"
-            )
+        planned_old_water = float(affected[node]["minority"])
+        source_plan_context_delta = _source_context_delta(old_water, planned_old_water)
+        max_abs_source_plan_context_delta = max(
+            max_abs_source_plan_context_delta,
+            abs(source_plan_context_delta),
+        )
         new_water = float(affected[node]["canonical"])
 
         cell_index = int(particle["production_cell_index"])
@@ -236,6 +271,8 @@ def extract_capsule(
             "external_trigger": trigger,
             "external_draw": draw,
             "old_hydro_context": old_water,
+            "planned_minority_hydro_context": planned_old_water,
+            "source_minus_planned_minority_context": source_plan_context_delta,
             "canonical_hydro_context": new_water,
             "old_external_probability": old_p,
             "canonical_external_probability": new_p,
@@ -286,6 +323,8 @@ def extract_capsule(
         "external_exchange_count_delta": external_count_delta,
         "external_exchange_count_canonical": int(record["external_exchange_tails"]) + external_count_delta,
         "max_old_external_probability_roundtrip_error": float(max_old_probability_error),
+        "minority_context_reconciliation_policy": MINORITY_CONTEXT_RECONCILIATION_POLICY,
+        "max_abs_source_minus_planned_minority_context": float(max_abs_source_plan_context_delta),
         "replay_rows": replay_rows,
         "pool_replacements": pool_replacements,
     }
@@ -316,6 +355,9 @@ def main() -> None:
         "external_actions": report["external_actions"],
         "external_exchange_count_delta": report["external_exchange_count_delta"],
         "max_old_external_probability_roundtrip_error": report["max_old_external_probability_roundtrip_error"],
+        "max_abs_source_minus_planned_minority_context": report[
+            "max_abs_source_minus_planned_minority_context"
+        ],
         "out": str(args.out),
     }, indent=2, sort_keys=True))
 
