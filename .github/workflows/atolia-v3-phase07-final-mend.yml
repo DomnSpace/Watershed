@@ -38,7 +38,7 @@ jobs:
           cache: pip
 
       - name: Install Atolia dependencies
-        run: python -m pip install -r requirements-atolia.txt
+        run: python -m pip install -r requirements-atolia.txt pytest
 
       - name: Verify repair and existing phase-07 gates
         run: >-
