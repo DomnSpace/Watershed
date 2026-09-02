@@ -1,0 +1,111 @@
+name: Atolia v3 Phase-08 full Dr. Corrosion extraction
+
+on:
+  push:
+    branches:
+      - atolia-v3-08-dr-corrosion-extract
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase08-dr-full
+  cancel-in-progress: false
+
+env:
+  CANONICAL_MEND_RUN_ID: "33623991317"
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[dr-extract-full]')
+    runs-on: ubuntu-24.04
+    outputs:
+      wave1: ${{ steps.matrix.outputs.wave1 }}
+      wave2: ${{ steps.matrix.outputs.wave2 }}
+      wave3: ${{ steps.matrix.outputs.wave3 }}
+    steps:
+      - name: Build three bounded extraction waves
+        id: matrix
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          capsule = {507, 508, 515, 516, 564, 565, 568, 569, 577}
+          waves = {
+              'wave1': range(0, 200),
+              'wave2': range(200, 400),
+              'wave3': range(400, 580),
+          }
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as handle:
+              for name, ordinals in waves.items():
+                  rows = [{'ordinal': i, 'capsule': i in capsule} for i in ordinals]
+                  handle.write(name + '=' + json.dumps(rows, separators=(',', ':')) + '\n')
+          PY
+
+      - name: Download successful Phase-07 mend provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-phase07-canonical-mend
+          path: /tmp/mend
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.CANONICAL_MEND_RUN_ID }}
+
+      - name: Freeze repair certificate for all extraction workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t CERTS < <(find /tmp/mend -type f -name 'repair-certificate.json' -print)
+          test "${#CERTS[@]}" -eq 1
+          mkdir -p /tmp/input
+          cp "${CERTS[0]}" /tmp/input/repair-certificate.json
+
+      - name: Upload compact worker input
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase08-dr-repair-certificate
+          path: /tmp/input/repair-certificate.json
+          compression-level: 6
+          retention-days: 7
+          if-no-files-found: error
+
+  wave1:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        item: ${{ fromJSON(needs.prepare.outputs.wave1) }}
+    uses: ./.github/workflows/atolia-v3-phase08-dr-worker.yml
+    with:
+      ordinal: ${{ matrix.item.ordinal }}
+      capsule: ${{ matrix.item.capsule }}
+
+  wave2:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        item: ${{ fromJSON(needs.prepare.outputs.wave2) }}
+    uses: ./.github/workflows/atolia-v3-phase08-dr-worker.yml
+    with:
+      ordinal: ${{ matrix.item.ordinal }}
+      capsule: ${{ matrix.item.capsule }}
+
+  wave3:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        item: ${{ fromJSON(needs.prepare.outputs.wave3) }}
+    uses: ./.github/workflows/atolia-v3-phase08-dr-worker.yml
+    with:
+      ordinal: ${{ matrix.item.ordinal }}
+      capsule: ${{ matrix.item.capsule }}
