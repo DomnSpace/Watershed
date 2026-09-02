@@ -26,6 +26,11 @@ from netCDF4 import Dataset
 V3_PHASE07_SCHEMA = "atolia-v3-canonical-full-manifest-v1"
 V3_PHASE07_PHASE = "atolia-v3-07-canonical-full"
 PHASE07_HASH_POLICY = "canonical-float-10sig-v1"
+RECOVERY_MANIFEST_SCHEMA = "atolia-v3-phase07-recovery-manifest-v1"
+RECOVERY_OVERLAY_POLICY = (
+    "immutable-source-record-preserved; canonical-hydro-identity-and-context-projected; "
+    "external-exchange-delta-capsule-backed"
+)
 
 
 def _canonical_float(value: float) -> float:
@@ -212,8 +217,124 @@ def write_manifest(
     }
 
 
+def recovery_overlay_hash(rows: Sequence[Mapping[str, Any]]) -> str:
+    payload = {
+        "schema": RECOVERY_MANIFEST_SCHEMA,
+        "policy": RECOVERY_OVERLAY_POLICY,
+        "overlays": [_plain(dict(row)) for row in rows],
+    }
+    return hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
+
+
+def append_recovery_metadata(
+    path: Path,
+    overlays: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Attach a separately hashed repair lineage to an existing logical manifest.
+
+    The ordinary phase-07 manifest hash continues to cover the logical shard
+    counts and globally merged public tables.  This second root commits to the
+    immutable source fragment/phase-05 hashes and the exact replay capsules used
+    to project minority shards into the chosen observed realization.
+    """
+    ordered = sorted((_plain(dict(row)) for row in overlays), key=lambda row: int(row["chunk_ordinal"]))
+    ordinals = [int(row["chunk_ordinal"]) for row in ordered]
+    if len(ordinals) != len(set(ordinals)):
+        raise RuntimeError("phase-07 recovery metadata contains duplicate chunk ordinals")
+    digest = recovery_overlay_hash(ordered)
+    path = Path(path)
+    with Dataset(path, "a") as ds:
+        if "recovery" in ds.groups:
+            raise RuntimeError("phase-07 manifest already contains recovery metadata")
+        ds.recovery_schema = RECOVERY_MANIFEST_SCHEMA
+        ds.recovery_policy = RECOVERY_OVERLAY_POLICY
+        ds.recovery_overlay_sha256 = digest
+        ds.recovery_overlay_count = len(ordered)
+        group = ds.createGroup("recovery")
+        group.createDimension("overlay", len(ordered))
+        for field in (
+            "source_fragment_sha256",
+            "repaired_fragment_sha256",
+            "source_hydro_realization_id",
+            "canonical_hydro_realization_id",
+            "source_hydro_realization_signature",
+            "canonical_hydro_realization_signature",
+            "source_chunk_sha256",
+            "source_phase05_sha256",
+            "replay_capsule_sha256",
+        ):
+            _string_var(group, field, "overlay", [row.get(field, "") for row in ordered])
+        for field in (
+            "chunk_ordinal",
+            "hydro_identity_replacement_count",
+            "hydro_context_replacement_count",
+            "source_external_exchange_tails",
+            "external_exchange_count_delta",
+            "canonical_external_exchange_tails",
+        ):
+            _numeric_var(group, field, "i8", "overlay", [int(row[field]) for row in ordered])
+    return {
+        "schema": RECOVERY_MANIFEST_SCHEMA,
+        "policy": RECOVERY_OVERLAY_POLICY,
+        "recovery_overlay_sha256": digest,
+        "overlay_count": len(ordered),
+        "chunk_ordinals": ordinals,
+    }
+
+
 def _read_strings(group: Any, name: str) -> list[str]:
     return [v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in group.variables[name][:]]
+
+
+def _read_recovery_metadata(ds: Any) -> dict[str, Any] | None:
+    if "recovery" not in ds.groups:
+        return None
+    if str(getattr(ds, "recovery_schema", "")) != RECOVERY_MANIFEST_SCHEMA:
+        raise RuntimeError("phase-07 recovery manifest schema mismatch")
+    if str(getattr(ds, "recovery_policy", "")) != RECOVERY_OVERLAY_POLICY:
+        raise RuntimeError("phase-07 recovery manifest policy mismatch")
+    group = ds.groups["recovery"]
+    count = len(group.dimensions["overlay"])
+    string_fields = (
+        "source_fragment_sha256",
+        "repaired_fragment_sha256",
+        "source_hydro_realization_id",
+        "canonical_hydro_realization_id",
+        "source_hydro_realization_signature",
+        "canonical_hydro_realization_signature",
+        "source_chunk_sha256",
+        "source_phase05_sha256",
+        "replay_capsule_sha256",
+    )
+    int_fields = (
+        "chunk_ordinal",
+        "hydro_identity_replacement_count",
+        "hydro_context_replacement_count",
+        "source_external_exchange_tails",
+        "external_exchange_count_delta",
+        "canonical_external_exchange_tails",
+    )
+    strings = {field: _read_strings(group, field) for field in string_fields}
+    integers = {field: group.variables[field][:] for field in int_fields}
+    rows = []
+    for index in range(count):
+        row = {field: strings[field][index] for field in string_fields}
+        row.update({field: int(integers[field][index]) for field in int_fields})
+        rows.append(row)
+    if rows != sorted(rows, key=lambda row: int(row["chunk_ordinal"])):
+        raise RuntimeError("phase-07 recovery overlays are not ordered by chunk ordinal")
+    if int(getattr(ds, "recovery_overlay_count", -1)) != count:
+        raise RuntimeError("phase-07 recovery overlay count mismatch")
+    computed = recovery_overlay_hash(rows)
+    if computed != str(getattr(ds, "recovery_overlay_sha256", "")):
+        raise RuntimeError("phase-07 recovery overlay hash mismatch")
+    return {
+        "schema": RECOVERY_MANIFEST_SCHEMA,
+        "policy": RECOVERY_OVERLAY_POLICY,
+        "recovery_overlay_sha256": computed,
+        "overlay_count": count,
+        "overlays": rows,
+    }
 
 
 def read_manifest(path: Path) -> dict[str, Any]:
@@ -285,7 +406,7 @@ def read_manifest(path: Path) -> dict[str, Any]:
         computed = manifest_hash(config, shards, pools, tool_use, totals)
         if computed != str(ds.phase07_manifest_sha256):
             raise RuntimeError("phase-07 manifest hash mismatch")
-        return {
+        result = {
             "schema": str(ds.schema),
             "phase": str(ds.phase),
             "hash_policy": str(ds.hash_policy),
@@ -298,3 +419,7 @@ def read_manifest(path: Path) -> dict[str, Any]:
             "tool_use": tool_use,
             "totals": totals,
         }
+        recovery = _read_recovery_metadata(ds)
+        if recovery is not None:
+            result["recovery"] = recovery
+        return result

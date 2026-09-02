@@ -1,0 +1,252 @@
+name: Atolia v3 phase-07 canonical hydro mend
+
+on:
+  push:
+    branches:
+      - atolia-v3-07-manifest-rescue
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase07-canonical-hydro-mend
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHARD_RUN_ID: "33305458675"
+  RECOVERED_FRAGMENT_RUN_ID: "33355983850"
+  CUTOFF_PLAN_RUN_ID: "33555735512"
+  REPLAY_RUN_ID: "33621402837"
+  POPULATION_CELLS: "37100"
+  CHUNK_CELLS: "64"
+
+jobs:
+  mend:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase07-final-mend]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout mend code
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Atolia dependencies
+        run: python -m pip install -r requirements-atolia.txt
+
+      - name: Verify repair and existing phase-07 gates
+        run: >-
+          python -m pytest -q
+          tests/test_v3_phase07_repair.py
+          tests/test_v3_phase07_replay_capsule.py
+          tests/test_v3_phase07_durable.py
+          tests/test_v3_phase07_canonical.py
+
+      - name: Download all immutable-source compact fragments
+        uses: actions/download-artifact@v6
+        with:
+          pattern: atolia-v3-canonical-fragment-*
+          path: /tmp/atolia_v3_source_fragments
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.RECOVERED_FRAGMENT_RUN_ID }}
+
+      - name: Download cutoff and selective-replay plan
+        uses: actions/download-artifact@v6
+        with:
+          name: atolia-v3-phase07-cutoff-replay-plan
+          path: /tmp/atolia_v3_cutoff_plan
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.CUTOFF_PLAN_RUN_ID }}
+
+      - name: Download exact replay capsules
+        uses: actions/download-artifact@v6
+        with:
+          pattern: phase07-replay-capsule-*
+          path: /tmp/atolia_v3_replay_capsules
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.REPLAY_RUN_ID }}
+
+      - name: Download replay summary
+        uses: actions/download-artifact@v6
+        with:
+          name: atolia-v3-phase07-replay-summary
+          path: /tmp/atolia_v3_replay_summary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.REPLAY_RUN_ID }}
+
+      - name: Project the minority fragments into the observed canonical realization
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/atolia_v3_mend
+          python src/atolia/v3_phase07_repair.py \
+            --fragments-dir /tmp/atolia_v3_source_fragments \
+            --capsules-dir /tmp/atolia_v3_replay_capsules \
+            --plan /tmp/atolia_v3_cutoff_plan/atolia_v3_cutoff_replay_plan.json \
+            --out-fragments-dir /tmp/atolia_v3_mend/logical_fragments \
+            --certificate /tmp/atolia_v3_mend/repair-certificate.json \
+            --population-cells "$POPULATION_CELLS" \
+            --chunk-cells "$CHUNK_CELLS" \
+            --source-fragment-run-id "$RECOVERED_FRAGMENT_RUN_ID" \
+            --source-shard-run-id "$SOURCE_SHARD_RUN_ID" \
+            --cutoff-plan-run-id "$CUTOFF_PLAN_RUN_ID" \
+            --replay-run-id "$REPLAY_RUN_ID" \
+            --mend-code-sha "$GITHUB_SHA" \
+            | tee /tmp/atolia_v3_mend/repair-summary.json
+
+      - name: Assemble the self-describing canonical root
+        shell: bash
+        run: |
+          set -euo pipefail
+          python src/atolia/v3_phase07_assemble_fragments.py \
+            --fragment-dir /tmp/atolia_v3_mend/logical_fragments \
+            --out /tmp/atolia_v3_mend/manifest.nc \
+            --population-cells "$POPULATION_CELLS" \
+            --chunk-cells "$CHUNK_CELLS" \
+            | tee /tmp/atolia_v3_mend/manifest-summary.json
+
+      - name: Verify replay, certificate, overlays, and canonical root together
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          sys.path.insert(0, 'src/atolia')
+          import v3_phase07_fragment as fragment_io
+          import v3_phase07_manifest as manifest
+
+          root = manifest.read_manifest('/tmp/atolia_v3_mend/manifest.nc')
+          certificate_path = Path('/tmp/atolia_v3_mend/repair-certificate.json')
+          certificate = json.loads(certificate_path.read_text(encoding='utf-8'))
+          certificate_body = dict(certificate)
+          supplied_certificate_hash = str(certificate_body.pop('certificate_sha256'))
+          assert supplied_certificate_hash == fragment_io._fragment_hash(certificate_body)
+          replay = json.loads(
+              Path('/tmp/atolia_v3_replay_summary/atolia_v3_replay_summary.json').read_text(encoding='utf-8')
+          )
+          plan = json.loads(
+              Path('/tmp/atolia_v3_cutoff_plan/atolia_v3_cutoff_replay_plan.json').read_text(encoding='utf-8')
+          )
+
+          canonical_rid = plan['observed_variants']['canonical_hydro_realization_id']
+          assert replay['capsule_count'] == 9
+          assert replay['affected_particle_count'] == 21737
+          assert replay['affected_pool_count_sum_by_shard'] == 1136
+          assert replay['external_threshold_flip_count'] == 22
+          assert replay['external_exchange_count_delta'] == -12
+          assert replay['external_actions'] == {
+              'ADD': 5,
+              'REMOVE': 17,
+              'UNCHANGED_ABSENT': 20793,
+              'UPDATE': 922,
+          }
+          assert replay['max_old_external_probability_roundtrip_error'] == 0.0
+
+          counts = certificate['counts']
+          assert counts['source_fragments'] == 580
+          assert counts['retained_canonical_fragments'] == 411
+          assert counts['repaired_minority_fragments'] == 169
+          assert counts['capsule_backed_fragments'] == 9
+          assert counts['hydro_context_replacement_rows'] == 1136
+          assert counts['external_exchange_count_delta'] == -12
+          assert certificate['external_actions'] == replay['external_actions']
+          assert len(certificate['entries']) == 580
+
+          assert root['world_build_id'] == plan['world_build_id']
+          assert root['product_scope'] == 'canonical-full'
+          assert root['config']['population_cells'] == 37100
+          assert root['config']['materialized_cells'] == 37100
+          assert len(root['shards']) == 580
+          assert root['shards'][0]['global_cell_start'] == 0
+          assert root['shards'][-1]['global_cell_stop'] == 37100
+          assert {row['hydro_realization_id'] for row in root['deposition_pools']} == {canonical_rid}
+          assert root['totals']['hydro_realization_signature'] == certificate[
+              'canonical_hydro_realization_signature'
+          ]
+
+          recovery = root['recovery']
+          assert recovery['overlay_count'] == 169
+          assert sum(row['external_exchange_count_delta'] for row in recovery['overlays']) == -12
+          assert sum(bool(row['replay_capsule_sha256']) for row in recovery['overlays']) == 9
+          by_ordinal = {int(row['chunk_ordinal']): row for row in certificate['entries']}
+          for overlay in recovery['overlays']:
+              entry = by_ordinal[int(overlay['chunk_ordinal'])]
+              assert overlay['source_fragment_sha256'] == entry['source_fragment_sha256']
+              assert overlay['repaired_fragment_sha256'] == entry['logical_fragment_sha256']
+              assert overlay['source_phase05_sha256'] == entry['source_phase05_sha256']
+
+          repaired_only = Path('/tmp/atolia_v3_mend/repaired_minority_fragments')
+          repaired_only.mkdir()
+          logical_root = Path('/tmp/atolia_v3_mend/logical_fragments')
+          for entry in certificate['entries']:
+              if entry['action'] != 'PROJECT_MINORITY_TO_CANONICAL':
+                  continue
+              ordinal = int(entry['chunk_ordinal'])
+              start = ordinal * 64
+              stop = min(37100, start + 64)
+              name = f'atolia_v3_canonical_{start:06d}_{stop:06d}.fragment.json'
+              os.link(logical_root / name, repaired_only / name)
+          assert len(list(repaired_only.glob('*.fragment.json'))) == 169
+
+          verification = {
+              'schema': 'atolia-v3-phase07-canonical-mend-verification-v1',
+              'world_build_id': root['world_build_id'],
+              'phase07_manifest_sha256': root['phase07_manifest_sha256'],
+              'recovery_overlay_sha256': recovery['recovery_overlay_sha256'],
+              'repair_certificate_sha256': supplied_certificate_hash,
+              'canonical_hydro_realization_id': canonical_rid,
+              'source_fragments': 580,
+              'repaired_minority_fragments': 169,
+              'capsule_backed_fragments': 9,
+              'affected_particles': replay['affected_particle_count'],
+              'affected_pool_rows': replay['affected_pool_count_sum_by_shard'],
+              'external_threshold_flips': replay['external_threshold_flip_count'],
+              'external_exchange_count_delta': replay['external_exchange_count_delta'],
+          }
+          Path('/tmp/atolia_v3_mend/verification.json').write_text(
+              json.dumps(verification, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(verification, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload repaired minority fragment overlays
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase07-repaired-minority-fragments
+          path: /tmp/atolia_v3_mend/repaired_minority_fragments
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Upload canonical mend root and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase07-canonical-mend
+          path: |
+            /tmp/atolia_v3_mend/manifest.nc
+            /tmp/atolia_v3_mend/manifest-summary.json
+            /tmp/atolia_v3_mend/repair-certificate.json
+            /tmp/atolia_v3_mend/repair-summary.json
+            /tmp/atolia_v3_mend/verification.json
+            /tmp/atolia_v3_cutoff_plan/atolia_v3_cutoff_replay_plan.json
+            /tmp/atolia_v3_replay_summary/atolia_v3_replay_summary.json
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error

@@ -36,6 +36,11 @@ import v3_phase07_manifest as manifest
 
 FRAGMENT_SCHEMA = "atolia-v3-phase07-manifest-fragment-v1"
 FRAGMENT_HASH_POLICY = "lossless-json-float-roundtrip-v1"
+RECOVERY_OVERLAY_SCHEMA = "atolia-v3-phase07-hydro-repair-overlay-v1"
+RECOVERY_OVERLAY_POLICY = (
+    "immutable-source-record-preserved; canonical-hydro-identity-and-context-projected; "
+    "external-exchange-delta-capsule-backed"
+)
 
 
 def _plain_exact(value: Any) -> Any:
@@ -147,6 +152,42 @@ def read_fragment(path: Path) -> dict[str, Any]:
     for key in ("world_build_id", "chunk_ordinal", "global_cell_start", "global_cell_stop"):
         if str(payload[key]) != str(record[key]):
             raise RuntimeError(f"phase-07 fragment envelope/record mismatch for {key}")
+
+    recovery = payload.get("recovery")
+    if recovery is not None:
+        if not isinstance(recovery, Mapping):
+            raise RuntimeError(f"phase-07 fragment recovery overlay is not an object in {path}")
+        if recovery.get("schema") != RECOVERY_OVERLAY_SCHEMA:
+            raise RuntimeError(f"unsupported phase-07 recovery overlay schema in {path}")
+        if recovery.get("policy") != RECOVERY_OVERLAY_POLICY:
+            raise RuntimeError(f"unsupported phase-07 recovery overlay policy in {path}")
+        if str(recovery.get("source_chunk_sha256")) != str(record["chunk_sha256"]):
+            raise RuntimeError(f"phase-07 recovery source chunk hash mismatch in {path}")
+        if str(recovery.get("source_phase05_sha256")) != str(record["phase05_sha256"]):
+            raise RuntimeError(f"phase-07 recovery source phase-05 hash mismatch in {path}")
+        if int(recovery.get("source_external_exchange_tails", -1)) != int(
+            record["external_exchange_tails"]
+        ):
+            raise RuntimeError(f"phase-07 recovery source external count mismatch in {path}")
+        expected_external = int(record["external_exchange_tails"]) + int(
+            recovery.get("external_exchange_count_delta", 0)
+        )
+        if int(recovery.get("canonical_external_exchange_tails", -1)) != expected_external:
+            raise RuntimeError(f"phase-07 recovery canonical external count mismatch in {path}")
+        if expected_external < 0:
+            raise RuntimeError(f"phase-07 recovery canonical external count is negative in {path}")
+        if str(payload["hydro_realization_signature"]) != str(
+            recovery.get("canonical_hydro_realization_signature")
+        ):
+            raise RuntimeError(f"phase-07 recovery hydro signature mismatch in {path}")
+        canonical_rid = str(recovery.get("canonical_hydro_realization_id"))
+        pool_ids = {str(row["hydro_realization_id"]) for row in payload["deposition_pools"]}
+        if pool_ids != {canonical_rid}:
+            raise RuntimeError(f"phase-07 recovery deposition hydro identity mismatch in {path}")
+        if int(recovery.get("hydro_identity_replacement_count", -1)) != len(
+            payload["deposition_pools"]
+        ):
+            raise RuntimeError(f"phase-07 recovery pool replacement count mismatch in {path}")
     return payload
 
 

@@ -245,6 +245,7 @@ def assemble_fragments(
     workshop_signatures: set[str] = set()
     hydro_signatures: set[str] = set()
     fragment_hashes: list[str] = []
+    recovery_overlays: list[dict[str, Any]] = []
 
     for ordinal, (path, frag) in enumerate(fragments):
         start = ordinal * chunk
@@ -261,6 +262,45 @@ def assemble_fragments(
             raise RuntimeError(f"fragment {ordinal} chunk coordinates do not match canonical plan")
         if str(record["shard_name"]) != expected_shard_name:
             raise RuntimeError(f"fragment {ordinal} shard name does not match canonical plan")
+
+        recovery = frag.get("recovery")
+        if recovery is not None:
+            # The embedded record remains the immutable physical source record.
+            # Only the public logical root receives the exact capsule-backed count.
+            record["external_exchange_tails"] = int(
+                recovery["canonical_external_exchange_tails"]
+            )
+            recovery_overlays.append({
+                "chunk_ordinal": ordinal,
+                "source_fragment_sha256": str(recovery["source_fragment_sha256"]),
+                "repaired_fragment_sha256": str(frag["fragment_sha256"]),
+                "source_hydro_realization_id": str(recovery["source_hydro_realization_id"]),
+                "canonical_hydro_realization_id": str(recovery["canonical_hydro_realization_id"]),
+                "source_hydro_realization_signature": str(
+                    recovery["source_hydro_realization_signature"]
+                ),
+                "canonical_hydro_realization_signature": str(
+                    recovery["canonical_hydro_realization_signature"]
+                ),
+                "source_chunk_sha256": str(recovery["source_chunk_sha256"]),
+                "source_phase05_sha256": str(recovery["source_phase05_sha256"]),
+                "replay_capsule_sha256": str(recovery.get("replay_capsule_sha256", "")),
+                "hydro_identity_replacement_count": int(
+                    recovery["hydro_identity_replacement_count"]
+                ),
+                "hydro_context_replacement_count": int(
+                    recovery["hydro_context_replacement_count"]
+                ),
+                "source_external_exchange_tails": int(
+                    recovery["source_external_exchange_tails"]
+                ),
+                "external_exchange_count_delta": int(
+                    recovery["external_exchange_count_delta"]
+                ),
+                "canonical_external_exchange_tails": int(
+                    recovery["canonical_external_exchange_tails"]
+                ),
+            })
 
         record["_flow_summary"] = frag["flow_summary"]
         record["_static_workshop_signature"] = str(frag["static_workshop_signature"])
@@ -322,6 +362,10 @@ def assemble_fragments(
         tool_use=tool_use,
         totals=totals,
     )
+    recovery_summary = None
+    if recovery_overlays:
+        recovery_summary = manifest.append_recovery_metadata(out_path, recovery_overlays)
+        summary["recovery"] = recovery_summary
     read = manifest.read_manifest(out_path)
     if read["phase07_manifest_sha256"] != summary["phase07_manifest_sha256"]:
         raise RuntimeError("phase-07 fragment manifest roundtrip hash mismatch")
@@ -329,6 +373,11 @@ def assemble_fragments(
         raise RuntimeError("phase-07 fragment manifest world identity mismatch")
     if int(read["config"]["materialized_cells"]) != population:
         raise RuntimeError("phase-07 fragment manifest is not a full population")
+    if recovery_summary is not None:
+        if read.get("recovery", {}).get("recovery_overlay_sha256") != recovery_summary[
+            "recovery_overlay_sha256"
+        ]:
+            raise RuntimeError("phase-07 recovery overlay manifest roundtrip hash mismatch")
 
     return {
         "latest_phase": manifest.V3_PHASE07_PHASE,
@@ -341,6 +390,7 @@ def assemble_fragments(
             "hydro_realization_equal_across_fragments": True,
             "global_deposition_pools_merged": True,
             "global_tool_use_merged": True,
+            **({"recovery_overlay_hash_equal": True} if recovery_summary is not None else {}),
         },
         "flow_summary": flow,
         "fragment_set": {
@@ -349,6 +399,7 @@ def assemble_fragments(
             "count": len(fragment_hashes),
             "first_sha256": fragment_hashes[0],
             "last_sha256": fragment_hashes[-1],
+            "repaired_count": len(recovery_overlays),
         },
         "runner": {
             "population_cells": population,
