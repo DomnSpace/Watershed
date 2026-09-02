@@ -1,0 +1,80 @@
+name: Atolia v3 phase-08 full extraction wave 1
+
+on:
+  push:
+    branches:
+      - atolia-v3-08-runtime-compression
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase08-full-wave1
+  cancel-in-progress: false
+
+env:
+  CANONICAL_MEND_RUN_ID: "33623991317"
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase08-full]')
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Build bounded wave matrix
+        id: matrix
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          capsule = {507, 508, 515, 516, 564, 565, 568, 569, 577}
+          rows = [{'ordinal': i, 'capsule': i in capsule} for i in range(0, 192)]
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+              f.write('matrix=' + json.dumps(rows, separators=(',', ':')) + '\n')
+          PY
+
+      - name: Download Phase-07 canonical mend provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-phase07-canonical-mend
+          path: /tmp/atolia_v3_mend
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.CANONICAL_MEND_RUN_ID }}
+
+      - name: Freeze only the repair certificate for workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t CERTS < <(find /tmp/atolia_v3_mend -type f -name 'repair-certificate.json' -print)
+          if [ "${#CERTS[@]}" -ne 1 ]; then
+            echo "expected one repair certificate, found ${#CERTS[@]}" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/atolia_v3_phase08_input
+          cp "${CERTS[0]}" /tmp/atolia_v3_phase08_input/repair-certificate.json
+
+      - name: Upload compact worker input
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase08-repair-certificate
+          path: /tmp/atolia_v3_phase08_input/repair-certificate.json
+          compression-level: 6
+          retention-days: 7
+          if-no-files-found: error
+
+  extract:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        item: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/atolia-v3-phase08-worker.yml
+    with:
+      ordinal: ${{ matrix.item.ordinal }}
+      capsule: ${{ matrix.item.capsule }}
