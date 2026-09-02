@@ -1,0 +1,154 @@
+name: Atolia v3 phase-08 real-shard canary
+
+on:
+  push:
+    branches:
+      - atolia-v3-08-runtime-compression
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase08-canary
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHARD_RUN_ID: "33305458675"
+  CANONICAL_MEND_RUN_ID: "33623991317"
+  REPLAY_RUN_ID: "33621402837"
+
+jobs:
+  real-shard-canary:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase08-canary]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ordinal: 0
+            capsule: false
+          - ordinal: 507
+            capsule: true
+    steps:
+      - name: Checkout Phase-08 branch
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+
+      - name: Download immutable Phase-07 source shard
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_SHARD_RUN_ID }}
+
+      - name: Download canonical mend certificate
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-phase07-canonical-mend
+          path: /tmp/atolia_v3_mend
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.CANONICAL_MEND_RUN_ID }}
+
+      - name: Download exact replay capsule
+        if: matrix.capsule
+        uses: actions/download-artifact@v4
+        with:
+          name: phase07-replay-capsule-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_capsule
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.REPLAY_RUN_ID }}
+
+      - name: Project real shard into empirical runtime fragment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t SHARDS < <(find /tmp/atolia_v3_source -type f -name '*.nc' -print)
+          if [ "${#SHARDS[@]}" -ne 1 ]; then
+            echo "expected one source NetCDF, found ${#SHARDS[@]}" >&2
+            exit 1
+          fi
+          mapfile -t CERTS < <(find /tmp/atolia_v3_mend -type f -name 'repair-certificate.json' -print)
+          if [ "${#CERTS[@]}" -ne 1 ]; then
+            echo "expected one repair certificate, found ${#CERTS[@]}" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/atolia_v3_phase08
+          ARGS=(
+            --shard "${SHARDS[0]}"
+            --certificate "${CERTS[0]}"
+            --ordinal '${{ matrix.ordinal }}'
+            --out '/tmp/atolia_v3_phase08/runtime-fragment-${{ matrix.ordinal }}.json'
+          )
+          if [ '${{ matrix.capsule }}' = 'true' ]; then
+            mapfile -t CAPSULES < <(find /tmp/atolia_v3_capsule -type f -name 'replay-${{ matrix.ordinal }}.json' -print)
+            if [ "${#CAPSULES[@]}" -ne 1 ]; then
+              echo "expected one replay capsule, found ${#CAPSULES[@]}" >&2
+              exit 1
+            fi
+            ARGS+=(--capsule "${CAPSULES[0]}")
+          fi
+          python src/atolia/v3_phase08_runtime_fragment.py "${ARGS[@]}"
+
+      - name: Verify canary anti-spoiler and repair invariants
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+          sys.path.insert(0, 'src/atolia')
+          import v3_phase08_runtime_fragment as p8
+
+          ordinal = int('${{ matrix.ordinal }}')
+          path = Path(f'/tmp/atolia_v3_phase08/runtime-fragment-{ordinal}.json')
+          row = json.loads(path.read_text(encoding='utf-8'))
+          assert row['schema'] == p8.SCHEMA
+          assert row['chunk_ordinal'] == ordinal
+          assert row['profile_count'] > 0
+          assert row['profile_count'] == len(row['profiles'])
+          assert row['fragment_sha256'] == p8.fragment_hash(row)
+          serialized = json.dumps(row['profiles'], sort_keys=True)
+          for forbidden_key in (
+              'particle_id', 'loss_site_id', 'production_cell_id', 'workshop_id',
+              'guild_id', 'source_id', 'deposition_pool_id', 'hydro_realization_id',
+          ):
+              assert f'"{forbidden_key}"' not in serialized
+          if ordinal == 507:
+              assert row['recovery']['action'] == 'PROJECT_MINORITY_TO_CANONICAL'
+              assert row['recovery']['replay_capsule_sha256']
+          print({
+              'ordinal': ordinal,
+              'profiles': row['profile_count'],
+              'external_tails': row['totals']['external_tail_count'],
+              'recorded_weight': row['totals']['recorded_weight'],
+              'recovery': row['recovery']['action'],
+          })
+          PY
+
+      - name: Upload compact canary fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase08-canary-${{ matrix.ordinal }}
+          path: /tmp/atolia_v3_phase08/runtime-fragment-${{ matrix.ordinal }}.json
+          compression-level: 6
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Remove runner-local source copy
+        if: always()
+        run: rm -rf /tmp/atolia_v3_source
