@@ -1,0 +1,133 @@
+name: Atolia v3 Phase-08 compact extraction worker
+
+on:
+  workflow_call:
+    inputs:
+      ordinal:
+        required: true
+        type: number
+      capsule:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  SOURCE_SHARD_RUN_ID: "33305458675"
+  REPLAY_RUN_ID: "33621402837"
+
+jobs:
+  extract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+
+      - name: Download immutable source shard
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ inputs.ordinal }}
+          path: /tmp/source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_SHARD_RUN_ID }}
+
+      - name: Download frozen Phase-08 repair certificate
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-phase08-dr-repair-certificate
+          path: /tmp/certificate
+
+      - name: Download exact replay capsule
+        if: inputs.capsule
+        uses: actions/download-artifact@v4
+        with:
+          name: phase07-replay-capsule-${{ inputs.ordinal }}
+          path: /tmp/capsule
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.REPLAY_RUN_ID }}
+
+      - name: Extract compact empirical sampler fragment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t SHARDS < <(find /tmp/source -type f -name '*.nc' -print)
+          mapfile -t CERTS < <(find /tmp/certificate -type f -name 'repair-certificate.json' -print)
+          test "${#SHARDS[@]}" -eq 1
+          test "${#CERTS[@]}" -eq 1
+          mkdir -p /tmp/out
+          ARGS=(
+            --shard "${SHARDS[0]}"
+            --certificate "${CERTS[0]}"
+            --ordinal '${{ inputs.ordinal }}'
+            --representatives-per-profile 2
+            --out '/tmp/out/compact-${{ inputs.ordinal }}.json.gz'
+          )
+          if [ '${{ inputs.capsule }}' = 'true' ]; then
+            mapfile -t CAPS < <(find /tmp/capsule -type f -name 'replay-${{ inputs.ordinal }}.json' -print)
+            test "${#CAPS[@]}" -eq 1
+            ARGS+=(--capsule "${CAPS[0]}")
+          fi
+          python src/atolia/v3_phase08_compact_fragment.py "${ARGS[@]}"
+
+      - name: Verify and summarize compact fragment
+        shell: bash
+        run: |
+          python - <<'PY'
+          import gzip, json
+          from pathlib import Path
+          ordinal = int('${{ inputs.ordinal }}')
+          source = next(Path('/tmp/source').rglob('*.nc'))
+          out = Path(f'/tmp/out/compact-{ordinal}.json.gz')
+          row = json.loads(gzip.decompress(out.read_bytes()))
+          assert row['schema'] == 'atolia-v3-phase08-compact-sampler-fragment-v1'
+          assert row['chunk_ordinal'] == ordinal
+          assert row['counts']['cells'] > 0
+          assert row['counts']['lineages'] >= row['counts']['profiles'] > 0
+          assert row['counts']['representatives'] <= 2 * row['counts']['profiles']
+          assert row['totals']['represented_weight'] > 0.0
+          assert row['totals']['recorded_weight'] > 0.0
+          assert bool(row['recovery']['replay_capsule_sha256']) == ('${{ inputs.capsule }}' == 'true')
+          summary = {
+              'schema': 'atolia-v3-phase08-compact-worker-summary-v1',
+              'ordinal': ordinal,
+              'fragment_sha256': row['fragment_sha256'],
+              'source_chunk_sha256': row['source']['chunk_sha256'],
+              'source_bytes': source.stat().st_size,
+              'compact_bytes': out.stat().st_size,
+              'compression_ratio': source.stat().st_size / out.stat().st_size,
+              **row['counts'],
+              **row['totals'],
+              'recovery_action': row['recovery']['action'],
+              'capsule_backed': bool(row['recovery']['replay_capsule_sha256']),
+          }
+          Path(f'/tmp/out/summary-{ordinal}.json').write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Delete runner-local giant source before upload
+        if: always()
+        run: rm -rf /tmp/source
+
+      - name: Upload compact fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase08-dr-fragment-${{ inputs.ordinal }}
+          path: |
+            /tmp/out/compact-${{ inputs.ordinal }}.json.gz
+            /tmp/out/summary-${{ inputs.ordinal }}.json
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
