@@ -109,3 +109,74 @@ jobs:
     with:
       ordinal: ${{ matrix.item.ordinal }}
       capsule: ${{ matrix.item.capsule }}
+
+  reduce:
+    needs: [wave1, wave2, wave3]
+    if: ${{ always() && needs.wave1.result == 'success' && needs.wave2.result == 'success' && needs.wave3.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download all 580 compact fragments only
+        uses: actions/download-artifact@v4
+        with:
+          pattern: atolia-v3-phase08-dr-fragment-*
+          path: /tmp/fragments
+          merge-multiple: true
+
+      - name: Assemble contiguous sampler root and stdlib archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/final
+          python src/atolia/v3_phase08_assemble_compact.py \
+            --fragments /tmp/fragments \
+            --index /tmp/final/atolia_v3_phase08_index.json.gz \
+            --archive /tmp/final/atolia_v3_phase08_sampler.zip \
+            --expected-shards 580
+
+      - name: Write final extraction summary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import gzip, hashlib, json
+          from pathlib import Path
+          index = Path('/tmp/final/atolia_v3_phase08_index.json.gz')
+          archive = Path('/tmp/final/atolia_v3_phase08_sampler.zip')
+          root = json.loads(gzip.decompress(index.read_bytes()))
+          assert root['shard_count'] == 580
+          assert root['global_cell_start'] == 0
+          assert root['global_cell_stop'] == 37100
+          assert root['counts']['cells'] == 37100
+          assert sum(row['capsule_backed'] for row in root['shards']) == 9
+          summary = {
+              'schema': 'atolia-v3-phase08-dr-extraction-summary-v1',
+              'world_build_id': root['world_build_id'],
+              'root_sha256': root['root_sha256'],
+              'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+              'archive_bytes': archive.stat().st_size,
+              'index_bytes': index.stat().st_size,
+              'shards': root['shard_count'],
+              'counts': root['counts'],
+              'totals': root['totals'],
+          }
+          Path('/tmp/final/summary.json').write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload durable Phase-08 Dr. Corrosion substrate
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase08-dr-substrate
+          path: |
+            /tmp/final/atolia_v3_phase08_index.json.gz
+            /tmp/final/atolia_v3_phase08_sampler.zip
+            /tmp/final/summary.json
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
