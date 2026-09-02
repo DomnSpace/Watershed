@@ -107,7 +107,7 @@ jobs:
             fi
             ARGS+=(--capsule "${CAPSULES[0]}")
           fi
-          python src/atolia/v3_phase08_runtime_fragment.py "${ARGS[@]}"
+          python src/atolia/v3_phase08_extract_shard.py "${ARGS[@]}"
 
       - name: Verify canary anti-spoiler and repair invariants
         shell: bash
