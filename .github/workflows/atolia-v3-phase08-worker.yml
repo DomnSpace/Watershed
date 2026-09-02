@@ -1,0 +1,153 @@
+name: Atolia v3 phase-08 shard worker
+
+on:
+  workflow_call:
+    inputs:
+      ordinal:
+        description: Phase-07 shard ordinal
+        required: true
+        type: number
+      capsule:
+        description: Whether this shard requires an exact Phase-07 replay capsule
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  SOURCE_SHARD_RUN_ID: "33305458675"
+  REPLAY_RUN_ID: "33621402837"
+
+jobs:
+  extract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout Phase-08 branch
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Atolia dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+
+      - name: Download immutable Phase-07 source shard
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ inputs.ordinal }}
+          path: /tmp/atolia_v3_source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_SHARD_RUN_ID }}
+
+      - name: Download Phase-08 frozen repair certificate
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-phase08-repair-certificate
+          path: /tmp/atolia_v3_certificate
+
+      - name: Download exact replay capsule
+        if: inputs.capsule
+        uses: actions/download-artifact@v4
+        with:
+          name: phase07-replay-capsule-${{ inputs.ordinal }}
+          path: /tmp/atolia_v3_capsule
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.REPLAY_RUN_ID }}
+
+      - name: Project one physical shard exactly once
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t SHARDS < <(find /tmp/atolia_v3_source -type f -name '*.nc' -print)
+          mapfile -t CERTS < <(find /tmp/atolia_v3_certificate -type f -name 'repair-certificate.json' -print)
+          if [ "${#SHARDS[@]}" -ne 1 ]; then
+            echo "expected one source NetCDF, found ${#SHARDS[@]}" >&2
+            exit 1
+          fi
+          if [ "${#CERTS[@]}" -ne 1 ]; then
+            echo "expected one repair certificate, found ${#CERTS[@]}" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/atolia_v3_phase08
+          ARGS=(
+            --shard "${SHARDS[0]}"
+            --certificate "${CERTS[0]}"
+            --ordinal '${{ inputs.ordinal }}'
+            --out '/tmp/atolia_v3_phase08/runtime-fragment-${{ inputs.ordinal }}.json'
+          )
+          if [ '${{ inputs.capsule }}' = 'true' ]; then
+            mapfile -t CAPSULES < <(find /tmp/atolia_v3_capsule -type f -name 'replay-${{ inputs.ordinal }}.json' -print)
+            if [ "${#CAPSULES[@]}" -ne 1 ]; then
+              echo "expected one replay capsule, found ${#CAPSULES[@]}" >&2
+              exit 1
+            fi
+            ARGS+=(--capsule "${CAPSULES[0]}")
+          fi
+          python src/atolia/v3_phase08_extract_shard.py "${ARGS[@]}"
+
+      - name: Remove runner-local physical source
+        if: always()
+        run: rm -rf /tmp/atolia_v3_source
+
+      - name: Verify compact fragment and write worker summary
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+          sys.path.insert(0, 'src/atolia')
+          import v3_phase08_runtime_fragment as p8
+
+          ordinal = int('${{ inputs.ordinal }}')
+          path = Path(f'/tmp/atolia_v3_phase08/runtime-fragment-{ordinal}.json')
+          row = json.loads(path.read_text(encoding='utf-8'))
+          assert row['schema'] == p8.SCHEMA
+          assert row['chunk_ordinal'] == ordinal
+          assert row['profile_count'] == len(row['profiles']) > 0
+          assert row['fragment_sha256'] == p8.fragment_hash(row)
+          serialized = json.dumps(row['profiles'], sort_keys=True)
+          for forbidden_key in (
+              'particle_id', 'loss_site_id', 'production_cell_id', 'workshop_id',
+              'guild_id', 'source_id', 'deposition_pool_id', 'hydro_realization_id',
+          ):
+              assert f'"{forbidden_key}"' not in serialized
+          expected_capsule = '${{ inputs.capsule }}' == 'true'
+          assert bool(row['recovery']['replay_capsule_sha256']) == expected_capsule
+          summary = {
+              'schema': 'atolia-v3-phase08-worker-summary-v1',
+              'ordinal': ordinal,
+              'fragment_sha256': row['fragment_sha256'],
+              'profile_count': row['profile_count'],
+              'represented_weight': row['totals']['represented_weight'],
+              'recorded_weight': row['totals']['recorded_weight'],
+              'external_tail_count': row['totals']['external_tail_count'],
+              'recovery_action': row['recovery']['action'],
+              'capsule_backed': expected_capsule,
+              'json_bytes': path.stat().st_size,
+          }
+          out = path.with_suffix('.summary.json')
+          out.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload compact Phase-08 fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase08-fragment-${{ inputs.ordinal }}
+          path: |
+            /tmp/atolia_v3_phase08/runtime-fragment-${{ inputs.ordinal }}.json
+            /tmp/atolia_v3_phase08/runtime-fragment-${{ inputs.ordinal }}.summary.json
+          compression-level: 6
+          retention-days: 90
+          if-no-files-found: error
