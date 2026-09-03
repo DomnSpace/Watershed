@@ -1,0 +1,106 @@
+name: Atolia v3 Phase-08 exact Phase-01 rescue worker
+
+on:
+  workflow_call:
+    inputs:
+      ordinal:
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  SOURCE_SHARD_RUN_ID: "33305458675"
+
+jobs:
+  rescue:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+
+      - name: Download immutable Phase-07 carrier
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-canonical-shard-${{ inputs.ordinal }}
+          path: /tmp/source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_SHARD_RUN_ID }}
+
+      - name: Rescue exact Phase-01 spine only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t SHARDS < <(find /tmp/source -type f -name '*.nc' -print)
+          test "${#SHARDS[@]}" -eq 1
+          mkdir -p /tmp/out
+          python src/atolia/v3_phase08_phase01_rescue.py \
+            --shard "${SHARDS[0]}" \
+            --ordinal '${{ inputs.ordinal }}' \
+            --out '/tmp/out/phase01-${{ inputs.ordinal }}.json.gz'
+
+      - name: Verify source hash survives gzip boundary exactly
+        shell: bash
+        run: |
+          python - <<'PY'
+          import gzip, json, sys
+          from pathlib import Path
+          sys.path.insert(0, 'src/atolia')
+          import v3_netcdf
+          import v3_phase08_phase01_rescue as rescue
+
+          ordinal = int('${{ inputs.ordinal }}')
+          source = next(Path('/tmp/source').rglob('*.nc'))
+          out = Path(f'/tmp/out/phase01-{ordinal}.json.gz')
+          row = json.loads(gzip.decompress(out.read_bytes()))
+          rescue._validate_phase01_payload(row)
+          spine = row['spine']
+          recomputed = v3_netcdf.spine_hash(
+              spine['cells'], spine['loss_strata'], spine['flow_summary']
+          )
+          assert recomputed == spine['spine_sha256']
+          assert recomputed == row['source']['phase01_spine_sha256']
+          assert row['chunk_ordinal'] == ordinal
+          assert len(spine['cells']) == row['global_cell_stop'] - row['global_cell_start']
+          summary = {
+              'schema': 'atolia-v3-phase08-phase01-rescue-summary-v1',
+              'ordinal': ordinal,
+              'world_build_id': row['world_build_id'],
+              'source_chunk_sha256': row['source']['chunk_sha256'],
+              'phase01_spine_sha256': recomputed,
+              'rescue_sha256': row['rescue_sha256'],
+              'cells': len(spine['cells']),
+              'loss_strata': len(spine['loss_strata']),
+              'source_bytes': source.stat().st_size,
+              'rescue_bytes': out.stat().st_size,
+          }
+          Path(f'/tmp/out/summary-{ordinal}.json').write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Delete runner-local giant source before upload
+        if: always()
+        run: rm -rf /tmp/source
+
+      - name: Upload durable exact Phase-01 rescue
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-phase08-phase01-rescue-${{ inputs.ordinal }}
+          path: |
+            /tmp/out/phase01-${{ inputs.ordinal }}.json.gz
+            /tmp/out/summary-${{ inputs.ordinal }}.json
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
