@@ -1,0 +1,133 @@
+name: Atolia v3 R17 + player_17 gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - atolia-v3-r17-player-netcdf
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-r17-build
+  cancel-in-progress: false
+
+env:
+  COMPACT_RUN_ID: "33645294772"
+  MEND_RUN_ID: "33623991317"
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[r17-build]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Atolia runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-atolia.txt
+
+      - name: Download existing 580 compact build intermediates
+        uses: actions/download-artifact@v4
+        with:
+          pattern: atolia-v3-phase08-dr-fragment-*
+          path: /tmp/fragments
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.COMPACT_RUN_ID }}
+
+      - name: Download successful Phase-07 canonical mend
+        uses: actions/download-artifact@v4
+        with:
+          name: atolia-v3-phase07-canonical-mend
+          path: /tmp/mend
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.MEND_RUN_ID }}
+
+      - name: Build one R17 NetCDF
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find /tmp/fragments -type f -name 'compact-*.json.gz' | wc -l)" -eq 580
+          mapfile -t CERTS < <(find /tmp/mend -type f -name 'repair-certificate.json' -print)
+          mapfile -t PLANS < <(find /tmp/mend -type f -name 'atolia_v3_cutoff_replay_plan.json' -print)
+          test "${#CERTS[@]}" -eq 1
+          test "${#PLANS[@]}" -eq 1
+          mkdir -p /tmp/final
+          python src/atolia/v3_build_runtime_v3.py \
+            --fragments /tmp/fragments \
+            --repair-certificate "${CERTS[0]}" \
+            --cutoff-plan "${PLANS[0]}" \
+            --hypothesis hypotheses/atolia_atesis_1800_1000_v0.json \
+            --out /tmp/final/atolia_runtime_v3.nc
+
+      - name: Validate R17 structure
+        shell: bash
+        run: |
+          python - <<'PY'
+          from netCDF4 import Dataset
+          p = '/tmp/final/atolia_runtime_v3.nc'
+          with Dataset(p) as ds:
+              assert ds.schema == 'atolia-v3-r17-generative-runtime-v1'
+              assert len(ds.dimensions['cell']) == 37100
+              assert int(ds.target_player_objects) == 300
+              assert len(ds.dimensions['shard']) == 580
+              assert len(ds.dimensions['hydro_override']) == 6
+              assert len(str(ds.runtime_fingerprint)) == 64
+              print('R17 bytes:', __import__('os').path.getsize(p))
+              print('R17 fingerprint:', ds.runtime_fingerprint)
+          PY
+
+      - name: Crystallize two players and prove 300-object determinism
+        shell: bash
+        run: |
+          set -euo pipefail
+          python generate_player_netcdf.py \
+            'r17-smoke-player-A' \
+            --runtime /tmp/final/atolia_runtime_v3.nc \
+            --out /tmp/player_A1.nc
+          python generate_player_netcdf.py \
+            'r17-smoke-player-A' \
+            --runtime /tmp/final/atolia_runtime_v3.nc \
+            --out /tmp/player_A2.nc
+          python generate_player_netcdf.py \
+            'r17-smoke-player-B' \
+            --runtime /tmp/final/atolia_runtime_v3.nc \
+            --out /tmp/player_B.nc
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'src/atolia')
+          from v3_player_netcdf import validate_player_netcdf
+          a1 = validate_player_netcdf(Path('/tmp/player_A1.nc'))
+          a2 = validate_player_netcdf(Path('/tmp/player_A2.nc'))
+          b = validate_player_netcdf(Path('/tmp/player_B.nc'))
+          assert a1['object_count'] == a2['object_count'] == b['object_count'] == 300
+          assert a1['player_state_fingerprint'] == a2['player_state_fingerprint']
+          assert a1['object_ids'] == a2['object_ids']
+          assert a1['object_ids'] != b['object_ids']
+          assert len(set(a1['object_ids'])) == len(set(b['object_ids'])) == 300
+          print('same player fingerprint:', a1['player_state_fingerprint'])
+          print('different player fingerprint:', b['player_state_fingerprint'])
+          PY
+          rm -f /tmp/player_A1.nc /tmp/player_A2.nc /tmp/player_B.nc
+
+      - name: Publish only the single R17 product
+        uses: actions/upload-artifact@v4
+        with:
+          name: atolia-v3-r17-runtime-v3
+          path: /tmp/final/atolia_runtime_v3.nc
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
