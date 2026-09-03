@@ -1,0 +1,86 @@
+name: Atolia v3 Phase-08 full exact Phase-01 rescue
+
+on:
+  push:
+    branches:
+      - atolia-v3-08-dr-corrosion-extract
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: atolia-v3-phase08-phase01-rescue-full
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[phase01-rescue-full]')
+    runs-on: ubuntu-24.04
+    outputs:
+      wave1: ${{ steps.matrix.outputs.wave1 }}
+      wave2: ${{ steps.matrix.outputs.wave2 }}
+      wave3: ${{ steps.matrix.outputs.wave3 }}
+    steps:
+      - name: Build three bounded rescue waves
+        id: matrix
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          waves = {
+              'wave1': range(0, 200),
+              'wave2': range(200, 400),
+              'wave3': range(400, 580),
+          }
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as handle:
+              for name, ordinals in waves.items():
+                  handle.write(name + '=' + json.dumps(list(ordinals), separators=(',', ':')) + '\n')
+          PY
+
+  wave1:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        ordinal: ${{ fromJSON(needs.prepare.outputs.wave1) }}
+    uses: ./.github/workflows/atolia-v3-phase08-phase01-rescue-worker.yml
+    with:
+      ordinal: ${{ matrix.ordinal }}
+
+  wave2:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        ordinal: ${{ fromJSON(needs.prepare.outputs.wave2) }}
+    uses: ./.github/workflows/atolia-v3-phase08-phase01-rescue-worker.yml
+    with:
+      ordinal: ${{ matrix.ordinal }}
+
+  wave3:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        ordinal: ${{ fromJSON(needs.prepare.outputs.wave3) }}
+    uses: ./.github/workflows/atolia-v3-phase08-phase01-rescue-worker.yml
+    with:
+      ordinal: ${{ matrix.ordinal }}
+
+  complete:
+    needs: [wave1, wave2, wave3]
+    if: ${{ always() && needs.wave1.result == 'success' && needs.wave2.result == 'success' && needs.wave3.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Record exact-spine rescue completion
+        run: |
+          echo 'All 580 Phase-01 rescue artifacts passed exact source-spine SHA-256 validation.'
+          echo 'No reducer is intentionally run here: per-shard 90-day rescue artifacts are the expiry boundary.'
