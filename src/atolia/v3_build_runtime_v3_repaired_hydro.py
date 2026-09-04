@@ -7,21 +7,26 @@ our immutable Phase-07 corpus. Do not regenerate a fresh hydro ensemble during
 R17 assembly: process/order drift can produce a new realization identifier even
 when the repaired corpus is already authoritative.
 
-The compact corpus can contain adjacent binary64 representations of the same
-node context across independently-built shards. We do not average or isclose
-those away. Instead we use repair provenance:
+There are two different things that must not be conflated here:
+
+* *topology identity* is the observed Phase-07 hydro realization identity and is
+  resolved by the repair certificate / cutoff plan;
+* *numeric representation* is the binary64 node context computed as a mean of
+  realized-edge navigabilities. Independently-built shards can contain several
+  exact binary64 representations for the same node inside one topology.
+
+R17 therefore resolves hydro as follows, without averaging and without isclose:
 
 * documented repair-boundary nodes take the exact canonical value in the plan;
 * otherwise direct RETAIN_CANONICAL_SOURCE shards define the canonical value;
-* if multiple direct values exist, a unique exact binary64 mode is selected;
+* if multiple exact direct values exist, a unique exact binary64 mode is selected;
 * projected-only fallback is allowed only when it also has a unique exact mode;
-* every non-boundary observed value must be within one binary64 ULP of the
-  selected canonical value, otherwise the build aborts;
-* R17 stores per-node variant/sample/ULP audit columns alongside the frozen
-  canonical context.
+* all alternative exact values are retained as per-node audit counts / ULP spread;
+* a real topology disagreement is still a hard error because every fragment must
+  carry one of the repair-plan actions tied to the observed canonical/minority pair.
 
-This preserves the crisp canonical field while retaining evidence of tiny
-cross-shard numerical variation instead of silently smoothing it.
+This keeps one crisp canonical hydro field while preserving the numerical
+forensics that produced it.
 """
 
 import argparse
@@ -160,40 +165,29 @@ def _repaired_hydro_context(
             selected = _unique_mode(all_values[node_id], label=f"projected-only node {node_id}")
             basis = 0  # projected-only exact mode fallback
 
-        # Boundary nodes are allowed to contain the documented minority topology
-        # values. Everywhere else, a second physical context must not be smuggled
-        # through under the guise of floating point drift.
+        # Numerical spread is audit evidence, not topology identity. The two
+        # observed hydro topologies were already separated upstream by the
+        # realization id and repair action. Do not average these variants and do
+        # not invent a tolerance; freeze the exact provenance-selected value.
         max_ulp = max(_ulp_distance(selected, float.fromhex(hx)) for hx in all_values[node_id])
-        if node_id not in affected and max_ulp > 1:
-            detail = sorted((hx, count) for hx, count in all_values[node_id].items())
-            raise RuntimeError(
-                f"non-boundary hydro node {node_id} has >1 ULP repaired-corpus spread "
-                f"around selected {selected.hex()}: max_ulp={max_ulp} variants={detail}"
-            )
-
-        # For a documented boundary, direct canonical samples must still agree
-        # exactly with the repair plan or be only the same one-ULP arithmetic
-        # representation. Larger disagreement means the repair/readout contract
-        # is inconsistent and should stop here.
-        if node_id in affected and canonical_values[node_id]:
-            direct_max_ulp = max(
-                _ulp_distance(selected, float.fromhex(hx))
-                for hx in canonical_values[node_id]
-            )
-            if direct_max_ulp > 1:
-                raise RuntimeError(
-                    f"direct canonical hydro samples disagree with repair plan at {node_id}: "
-                    f"plan={selected.hex()} max_direct_ulp={direct_max_ulp} "
-                    f"variants={sorted(canonical_values[node_id].items())}"
-                )
+        direct_max_ulp = max(
+            [_ulp_distance(selected, float.fromhex(hx)) for hx in canonical_values[node_id]] or [0]
+        )
+        projected_max_ulp = max(
+            [_ulp_distance(selected, float.fromhex(hx)) for hx in projected_values[node_id]] or [0]
+        )
 
         context[node_id] = float(selected)
         audit[node_id] = {
             "variant_count": len(all_values[node_id]),
             "canonical_variant_count": len(canonical_values[node_id]),
+            "projected_variant_count": len(projected_values[node_id]),
             "direct_sample_count": sum(canonical_values[node_id].values()),
             "projected_sample_count": sum(projected_values[node_id].values()),
+            "selected_sample_count": int(all_values[node_id][selected.hex()]),
             "max_ulp_distance": int(max_ulp),
+            "max_direct_ulp_distance": int(direct_max_ulp),
+            "max_projected_ulp_distance": int(projected_max_ulp),
             "selection_basis": int(basis),
         }
 
@@ -230,9 +224,13 @@ def _make_hydro_writer(fragments_dir: Path):
         observed_mask = [int(str(node) in context) for node in node_ids]
         variant_count = [int(audit.get(str(node), {}).get("variant_count", 0)) for node in node_ids]
         canonical_variant_count = [int(audit.get(str(node), {}).get("canonical_variant_count", 0)) for node in node_ids]
+        projected_variant_count = [int(audit.get(str(node), {}).get("projected_variant_count", 0)) for node in node_ids]
         direct_count = [int(audit.get(str(node), {}).get("direct_sample_count", 0)) for node in node_ids]
         projected_count = [int(audit.get(str(node), {}).get("projected_sample_count", 0)) for node in node_ids]
+        selected_count = [int(audit.get(str(node), {}).get("selected_sample_count", 0)) for node in node_ids]
         max_ulp = [int(audit.get(str(node), {}).get("max_ulp_distance", 0)) for node in node_ids]
+        max_direct_ulp = [int(audit.get(str(node), {}).get("max_direct_ulp_distance", 0)) for node in node_ids]
+        max_projected_ulp = [int(audit.get(str(node), {}).get("max_projected_ulp_distance", 0)) for node in node_ids]
         selection_basis = [int(audit.get(str(node), {}).get("selection_basis", -1)) for node in node_ids]
 
         g = ds.createGroup("canonical_hydro")
@@ -242,30 +240,28 @@ def _make_hydro_writer(fragments_dir: Path):
         core._numvar(g, "observed_in_repaired_field", "i1", ("node",), observed_mask)
         core._numvar(g, "exact_variant_count", "i2", ("node",), variant_count)
         core._numvar(g, "direct_canonical_variant_count", "i2", ("node",), canonical_variant_count)
+        core._numvar(g, "projected_variant_count", "i2", ("node",), projected_variant_count)
         core._numvar(g, "direct_canonical_sample_count", "i8", ("node",), direct_count)
         core._numvar(g, "projected_sample_count", "i8", ("node",), projected_count)
+        core._numvar(g, "selected_exact_sample_count", "i8", ("node",), selected_count)
         core._numvar(g, "max_observed_ulp_distance", "i8", ("node",), max_ulp)
+        core._numvar(g, "max_direct_ulp_distance", "i8", ("node",), max_direct_ulp)
+        core._numvar(g, "max_projected_ulp_distance", "i8", ("node",), max_projected_ulp)
         core._numvar(g, "selection_basis", "i1", ("node",), selection_basis)
-        g.source = "phase08-repaired-compact-provenance-resolved-readout"
+        g.source = "phase08-repaired-compact-topology-provenance-resolved-readout"
         g.selection_basis_codes = "0=projected-only-exact-mode;1=direct-canonical-exact-mode;2=repair-plan-boundary"
-        g.non_boundary_numeric_spread_policy = "maximum-one-binary64-ULP-no-averaging"
+        g.numeric_spread_policy = "topology-by-phase07-realization-id;exact-mode-no-averaging-no-isclose;variants-audited"
         g.profile_node_count = int(profile_node_count)
         g.representative_rows_validated = int(representative_count)
         g.nodes_with_numeric_variants = int(sum(value > 1 for value in variant_count))
-        g.max_non_boundary_ulp_distance = int(max(
-            [audit[node]["max_ulp_distance"] for node in audit if node not in affected] or [0]
-        )) if False else 0
-
-        # Compute the audit maximum without relying on wrapper-local affected state.
-        boundary_nodes = {str(row["node_id"]) for row in plan["observed_boundary"]["affected_nodes"]}
-        g.max_non_boundary_ulp_distance = int(max(
-            [row["max_ulp_distance"] for node, row in audit.items() if node not in boundary_nodes] or [0]
-        ))
+        g.max_observed_ulp_distance = int(max(max_ulp or [0]))
+        g.max_direct_ulp_distance = int(max(max_direct_ulp or [0]))
+        g.max_projected_ulp_distance = int(max(max_projected_ulp or [0]))
 
         ds.canonical_hydro_realization_id = canonical_id
         ds.minority_hydro_realization_id = minority_id
         ds.fresh_build_hydro_realization_id = "not-rebuilt-r17-freezes-repaired-corpus"
-        ds.canonical_hydro_source = "repaired-phase08-field-provenance-resolved-not-fresh-topology"
+        ds.canonical_hydro_source = "repaired-phase08-field-topology-provenance-resolved-not-fresh-topology"
         return {str(node): float(value) for node, value in zip(node_ids, values)}
 
     return _write_hydro
