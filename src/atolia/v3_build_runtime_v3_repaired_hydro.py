@@ -1,13 +1,21 @@
 from __future__ import annotations
 
-"""R17 builder entry that freezes the repaired Phase-07/08 hydro readout.
+"""R17 builder entry that freezes the repaired Phase-07/08 readout.
 
-The canonical hydrology in the shipped runtime is an observed/mended property of
-our immutable Phase-07 corpus. Do not regenerate a fresh hydro ensemble during
-R17 assembly: process/order drift can produce a new realization identifier even
-when the repaired corpus is already authoritative.
+The shipped runtime is a frozen readout of the repaired corpus.  It must not
+regenerate scientific state at assembly time and then merely hope that today's
+process reproduces the historical build bit-for-bit.
 
-There are two different things that must not be conflated here:
+Two repaired boundaries are handled here:
+
+* canonical hydrology is selected from the observed Phase-07 realization
+  provenance and the repaired Phase-08 representatives;
+* the 37,100 production cells are hydrated directly from the exact compact
+  Phase-08 cell rows and source weights.  The freshly-built static world is used
+  only to resolve anonymous node/bundle/source tokens and provide the interpreter
+  graph; it is not allowed to redraw the production population.
+
+For hydrology there are two different things that must not be conflated:
 
 * *topology identity* is the observed Phase-07 hydro realization identity and is
   resolved by the repair certificate / cutoff plan;
@@ -25,8 +33,8 @@ R17 therefore resolves hydro as follows, without averaging and without isclose:
 * a real topology disagreement is still a hard error because every fragment must
   carry one of the repair-plan actions tied to the observed canonical/minority pair.
 
-This keeps one crisp canonical hydro field while preserving the numerical
-forensics that produced it.
+This keeps one crisp canonical field while preserving the numerical forensics
+that produced it.
 """
 
 import argparse
@@ -73,6 +81,163 @@ def _unique_mode(counter: Counter[str], *, label: str) -> float:
             f"count={top} winners={winners}"
         )
     return float.fromhex(winners[0])
+
+
+def _inverse_tokens(world_build_id: str, kind: str, raw_ids: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for raw_id in raw_ids:
+        raw = str(raw_id)
+        token = phase08.anonymous_token(world_build_id, kind, raw)
+        previous = out.get(token)
+        if previous is not None and previous != raw:
+            raise RuntimeError(
+                f"anonymous {kind} token collision while hydrating repaired R17 cells: "
+                f"{token} -> {previous!r}/{raw!r}"
+            )
+        out[token] = raw
+    return out
+
+
+def _repaired_production_cells(
+    fragments_dir: Path,
+    *,
+    world_build_id: str,
+    world: Any,
+    expected_shards: int,
+    population_cells: int,
+) -> list[Any]:
+    """Hydrate the exact Phase-08 production-cell population.
+
+    Compact Phase-08 deliberately stores anonymous bundle/node/source tokens but
+    keeps the cell scalar values and source weights as binary64 JSON numbers.  We
+    resolve those tokens against the static world and construct ProductionCell
+    objects from the repaired corpus itself.  No call to intensity.production_cells
+    is allowed on this path.
+    """
+    paths = list(Path(fragments_dir).rglob("compact-*.json.gz"))
+    by_ordinal: dict[int, Path] = {}
+    for path in paths:
+        ordinal = int(path.name.removeprefix("compact-").removesuffix(".json.gz"))
+        if ordinal in by_ordinal:
+            raise RuntimeError(f"duplicate compact ordinal while hydrating cells: {ordinal}")
+        by_ordinal[ordinal] = path
+    if sorted(by_ordinal) != list(range(expected_shards)):
+        raise RuntimeError(
+            f"repaired production-cell hydration expected ordinals 0..{expected_shards - 1}; "
+            f"found {len(by_ordinal)} fragments"
+        )
+
+    token_to_bundle = _inverse_tokens(
+        world_build_id, "bundle", [str(bundle.id) for bundle in world.bundles]
+    )
+    token_to_node = _inverse_tokens(
+        world_build_id, "node", [str(node_id) for node_id in world.nodes]
+    )
+    token_to_source = _inverse_tokens(
+        world_build_id, "source", [str(source_id) for source_id in world.sources]
+    )
+
+    cells: list[Any | None] = [None] * int(population_cells)
+    for ordinal in range(expected_shards):
+        fragment = core._read_fragment(by_ordinal[ordinal])
+        if str(fragment["world_build_id"]) != world_build_id:
+            raise RuntimeError(f"production-cell world mismatch at compact ordinal {ordinal}")
+        start = int(fragment["global_cell_start"])
+        stop = int(fragment["global_cell_stop"])
+        if start != ordinal * 64 or stop != min(population_cells, start + 64):
+            raise RuntimeError(
+                f"unexpected production-cell interval {start}:{stop} at compact ordinal {ordinal}"
+            )
+
+        d = fragment["dictionary"]
+        ccols = {name: i for i, name in enumerate(fragment["columns"]["cell"])}
+        scols = {name: i for i, name in enumerate(fragment["columns"]["cell_source"])}
+        if len(fragment["cells"]) != stop - start:
+            raise RuntimeError(f"compact cell count mismatch at ordinal {ordinal}")
+
+        source_mix_by_local: dict[int, dict[str, float]] = defaultdict(dict)
+        for source_row in fragment["cell_sources"]:
+            local = int(source_row[scols["cell"]])
+            if local < 0 or local >= stop - start:
+                raise RuntimeError(
+                    f"cell-source row references local cell {local} outside ordinal {ordinal}"
+                )
+            token = str(d["source"][int(source_row[scols["source"]])])
+            raw_source = token_to_source.get(token)
+            if raw_source is None:
+                raise RuntimeError(
+                    f"repaired cell source token does not resolve in frozen world: {token}"
+                )
+            if raw_source in source_mix_by_local[local]:
+                raise RuntimeError(
+                    f"duplicate repaired source {raw_source} for ordinal {ordinal} local cell {local}"
+                )
+            source_mix_by_local[local][raw_source] = float(source_row[scols["weight"]])
+
+        for local, row in enumerate(fragment["cells"]):
+            global_cell = int(row[ccols["global_cell_index"]])
+            if global_cell != start + local:
+                raise RuntimeError(
+                    f"compact production-cell ordering mismatch at ordinal {ordinal}: "
+                    f"local={local} global={global_cell} expected={start + local}"
+                )
+
+            bundle_token = str(d["bundle"][int(row[ccols["bundle"]])])
+            origin_token = str(d["node"][int(row[ccols["origin_node"]])])
+            destination_token = str(d["node"][int(row[ccols["destination_node"]])])
+            bundle_id = token_to_bundle.get(bundle_token)
+            origin = token_to_node.get(origin_token)
+            destination = token_to_node.get(destination_token)
+            if bundle_id is None:
+                raise RuntimeError(f"repaired bundle token does not resolve in frozen world: {bundle_token}")
+            if origin is None or destination is None:
+                raise RuntimeError(
+                    f"repaired node token does not resolve in frozen world for cell {global_cell}: "
+                    f"{origin_token}/{destination_token}"
+                )
+
+            cell = core.intensity.ProductionCell(
+                bundle_id=bundle_id,
+                bundle_family=str(d["family"][int(row[ccols["family"]])]),
+                object_class=str(d["object_class"][int(row[ccols["object_class"]])]),
+                date_bc=int(row[ccols["date_bc"]]),
+                origin=origin,
+                destination=destination,
+                production_intensity=float(row[ccols["production_intensity"]]),
+                circulation_seed_intensity=float(row[ccols["circulation_seed_intensity"]]),
+                source_mix=dict(source_mix_by_local.get(local, {})),
+                recycle_mean=float(row[ccols["recycle_mean"]]),
+            )
+            if cells[global_cell] is not None:
+                raise RuntimeError(f"duplicate repaired production cell {global_cell}")
+
+            hydrated_hash = core.runtime_v3.cell_identity_hash(
+                world_build_id=world_build_id,
+                global_cell_index=global_cell,
+                bundle_id=cell.bundle_id,
+                bundle_family=cell.bundle_family,
+                object_class=cell.object_class,
+                date_bc=cell.date_bc,
+                origin=cell.origin,
+                destination=cell.destination,
+                production_intensity=cell.production_intensity,
+                circulation_seed_intensity=cell.circulation_seed_intensity,
+                recycle_mean=cell.recycle_mean,
+                source_mix=cell.source_mix,
+            )
+            observed_hash = core._fragment_cell_digest(fragment, local)
+            if hydrated_hash != observed_hash:
+                raise RuntimeError(
+                    f"repaired production cell {global_cell} failed token hydration roundtrip"
+                )
+            cells[global_cell] = cell
+
+    missing = [index for index, cell in enumerate(cells) if cell is None]
+    if missing:
+        raise RuntimeError(
+            f"repaired production-cell field is incomplete: {len(missing)} missing; first={missing[:8]}"
+        )
+    return [cell for cell in cells if cell is not None]
 
 
 def _repaired_hydro_context(
@@ -269,16 +434,35 @@ def _make_hydro_writer(fragments_dir: Path):
 
 def build_runtime(**kwargs: Any) -> dict[str, Any]:
     fragments_dir = Path(kwargs["fragments_dir"])
-    original = core._write_hydro
+    expected_shards = int(kwargs.get("expected_shards", 580))
+    population_cells = int(kwargs.get("population_cells", 37100))
+    original_hydro = core._write_hydro
+    original_production_cells = core.intensity.production_cells
     core._write_hydro = _make_hydro_writer(fragments_dir)
+
+    def _frozen_cells(world: Any) -> list[Any]:
+        # world_build_id is stable from the repaired first fragment and is also
+        # checked independently by core.build_runtime before this function runs.
+        first_path = next(iter(sorted(fragments_dir.rglob("compact-*.json.gz"))))
+        first = core._read_fragment(first_path)
+        return _repaired_production_cells(
+            fragments_dir,
+            world_build_id=str(first["world_build_id"]),
+            world=world,
+            expected_shards=expected_shards,
+            population_cells=population_cells,
+        )
+
+    core.intensity.production_cells = _frozen_cells
     try:
         return core.build_runtime(**kwargs)
     finally:
-        core._write_hydro = original
+        core._write_hydro = original_hydro
+        core.intensity.production_cells = original_production_cells
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build R17 using repaired Phase-08 hydro readout")
+    parser = argparse.ArgumentParser(description="Build R17 using repaired Phase-07/08 frozen readout")
     parser.add_argument("--fragments", required=True, type=Path)
     parser.add_argument("--repair-certificate", required=True, type=Path)
     parser.add_argument("--cutoff-plan", required=True, type=Path)
