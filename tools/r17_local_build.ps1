@@ -24,9 +24,6 @@ function Get-GitHubToken {
         if ($LASTEXITCODE -eq 0 -and $token) { return [string]$token }
     }
 
-    # Git for Windows normally already has an authenticated Git Credential
-    # Manager entry when a private repository can be fetched. Ask Git's
-    # credential helper for that token without printing it to the terminal.
     $credentialInput = "protocol=https`nhost=github.com`n`n"
     $credentialLines = @($credentialInput | git credential fill 2>$null)
     if ($LASTEXITCODE -eq 0) {
@@ -84,7 +81,6 @@ function Expand-GitHubArtifact($Artifact, [string]$Token, [scriptblock]$Extracto
         & $Extractor $work
     }
     finally {
-        # Only disposable scratch belonging to this invocation is removed.
         Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -101,7 +97,6 @@ function Existing-FragmentCount {
 }
 
 if (-not $SkipDownload) {
-    # Create cache directories only. Existing downloaded inputs are never removed.
     New-Item -ItemType Directory -Force -Path $fragmentRoot, $mendRoot, $downloadScratch | Out-Null
 
     $fragmentCount = Existing-FragmentCount
@@ -159,7 +154,6 @@ if (-not $SkipDownload) {
     }
 }
 
-# From here on we require a complete immutable local input set. No source input is deleted.
 $fragments = @(Get-ChildItem $fragmentRoot -Recurse -Filter "compact-*.json.gz" -File -ErrorAction SilentlyContinue)
 if ($fragments.Count -ne 580) { throw "Expected 580 compact fragments, found $($fragments.Count). Re-run without -SkipDownload to resume." }
 $certs = @(Get-ChildItem $mendRoot -Recurse -Filter "repair-certificate.json" -File -ErrorAction SilentlyContinue)
@@ -167,7 +161,6 @@ $plans = @(Get-ChildItem $mendRoot -Recurse -Filter "atolia_v3_cutoff_replay_pla
 if ($certs.Count -ne 1) { throw "Expected one repair-certificate.json, found $($certs.Count)" }
 if ($plans.Count -ne 1) { throw "Expected one atolia_v3_cutoff_replay_plan.json, found $($plans.Count)" }
 
-# Do not reinstall packages on every iteration when the environment is already ready.
 python -c "import numpy, netCDF4, ijson" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing missing Atolia Python dependencies..."
@@ -178,7 +171,7 @@ if ($LASTEXITCODE -ne 0) {
 $outAbs = Join-Path $repo $Output
 New-Item -ItemType Directory -Force -Path (Split-Path $outAbs -Parent) | Out-Null
 Write-Host "Building one frozen R17 locally -> $outAbs"
-python src/atolia/v3_build_runtime_v3.py `
+python src/atolia/v3_build_runtime_v3_repaired_hydro.py `
     --fragments $fragmentRoot `
     --repair-certificate $certs[0].FullName `
     --cutoff-plan $plans[0].FullName `
