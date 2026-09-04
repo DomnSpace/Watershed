@@ -1,13 +1,6 @@
 from __future__ import annotations
 
-"""Compact exact-generative runtime contract for Atolia v3 / Dr. Corrosion.
-
-R17 does not store the expanded Phase-02..05 object population. It stores the
-canonical world recipe plus exact per-production-cell archaeological mass and
-hash checkpoints derived from the repaired Phase-07 corpus. A player runtime
-rebuilds only selected cells, verifies their compact checkpoints exactly, and
-then materializes the selected physical lineages.
-"""
+"""Shared contracts for the frozen Atolia v3 R17 field and private player slice."""
 
 import hashlib
 import json
@@ -15,9 +8,9 @@ from typing import Any, Mapping, Sequence
 
 from v3_phase08_runtime_fragment import anonymous_token
 
-RUNTIME_SCHEMA = "atolia-v3-r17-generative-runtime-v1"
+RUNTIME_SCHEMA = "atolia-v3-r17-frozen-field-v2"
 PLAYER_SCHEMA = "dr-corrosion-player-17-netcdf-v1"
-GENERATOR_VERSION = "atolia-v3-r17-crystallizer-v1"
+GENERATOR_VERSION = "atolia-v3-r17-keyed-acquisition-v2"
 CELL_HASH_POLICY = "sha256-canonical-json-float-hex-v1"
 PROFILE_HASH_POLICY = "sha256-profile-node-ordered-float-hex-v1"
 TARGET_OBJECTS = 300
@@ -69,10 +62,7 @@ def cell_identity_payload(
         origin_token = anonymous_token(world_build_id, "node", origin)
         destination_token = anonymous_token(world_build_id, "node", destination)
         sources = sorted(
-            (
-                anonymous_token(world_build_id, "source", key),
-                float_hex(value),
-            )
+            (anonymous_token(world_build_id, "source", key), float_hex(value))
             for key, value in source_mix.items()
             if float(value) != 0.0
         )
@@ -96,12 +86,7 @@ def cell_identity_hash(**kwargs: Any) -> bytes:
 
 
 def profile_checkpoint_payload(rows: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
-    """Canonical checkpoint rows for one production cell.
-
-    Each input row must expose tokenized ``node_token`` plus exact compact
-    profile values. Sorting by node token reproduces the compact Phase-08 key
-    order and makes the checkpoint independent of dictionary insertion order.
-    """
+    """Canonical Phase-08 checkpoint rows for one production cell or profile set."""
     out: list[list[Any]] = []
     for row in sorted(rows, key=lambda item: str(item["node_token"])):
         values: list[Any] = [
