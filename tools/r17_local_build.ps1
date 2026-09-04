@@ -69,7 +69,7 @@ function Get-RunArtifacts([Int64]$RunId, [string]$Token) {
     return $all
 }
 
-function Expand-GitHubArtifact($Artifact, [string]$Token, [string]$Destination) {
+function Expand-GitHubArtifact($Artifact, [string]$Token, [scriptblock]$Extractor) {
     $headers = Get-GitHubHeaders $Token
     $id = [Int64]$Artifact.id
     $name = [string]$Artifact.name
@@ -81,7 +81,7 @@ function Expand-GitHubArtifact($Artifact, [string]$Token, [string]$Destination) 
         Write-Host "  downloading $name"
         Invoke-WebRequest -UseBasicParsing -Uri $uri -Headers $headers -OutFile $zip
         Expand-Archive -LiteralPath $zip -DestinationPath $work -Force
-        & $Destination $work
+        & $Extractor $work
     }
     finally {
         # Only disposable scratch belonging to this invocation is removed.
