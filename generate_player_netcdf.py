@@ -14,6 +14,7 @@ if str(ATOLIA) not in sys.path:
     sys.path.insert(0, str(ATOLIA))
 
 import v3_player_crystallizer as crystallizer
+import v3_player_integrity as player_integrity
 import v3_player_netcdf as player_netcdf
 
 
@@ -33,11 +34,15 @@ def generate_player_netcdf(
         runtime_path=runtime,
         progress_callback=progress_callback,
     )
-    return player_netcdf.write_player_netcdf(
+    player_netcdf.write_player_netcdf(
         state,
         output_path,
         progress_callback=progress_callback,
     )
+    # v3_player_netcdf historically fingerprinted only the object header rows.
+    # Replace that transient attribute with a digest of every hidden table and
+    # simultaneously validate all foreign-key/chemistry/deposition invariants.
+    return player_integrity.finalize_player_netcdf(output_path)
 
 
 def main() -> None:
