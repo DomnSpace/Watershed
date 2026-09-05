@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-"""Profile-conditioned R17 player materialization.
+"""Joint-representative-conditioned R17 player materialization.
 
-The shipped R17 profile field is authoritative.  Player creation must not replay
-``intensity.propagate_cell`` on the client: the canonical Phase-07 corpus was
-produced on a different numerical platform and its 1e-5 active/loss threshold
-can change the *count* of tiny strata after only a few ULPs of arithmetic drift.
+R17 is the authoritative result of Phase-01 propagation. Player creation reads a
+stored empirical profile and one of its retained real Phase-08 joint
+representatives directly from the NetCDF; it never replays the platform-sensitive
+Phase-01 active/loss threshold.
 
-Instead one selected empirical (production-cell, loss-node) profile is converted
-straight into one deterministic LossStratum using the exact profile moments
-stored in R17.  Phase-02..05 then materialize the private detailed biography from
-that frozen latent state.  This is the old weather-readout boundary: query one
-stored latent profile, expand only that profile.
+The representative is not copied into player_17 as a finished object. Its joint
+state conditions a fresh coherent Phase-02 -> Phase-03 -> Phase-04 -> Phase-05
+expansion: actual represented loss mass, realized remelt/repair counts, route
+extent, source entropy and deposition mode enter the downstream model together.
 """
 
 import hashlib
@@ -20,10 +19,12 @@ from typing import Any, Mapping
 import numpy as np
 
 import intensity_circulation as intensity
+import v3_hydro_exchange_deposition as phase05
 import v3_runtime_v3 as runtime_v3
 
 
-READOUT_VERSION = "atolia-v3-r17-profile-conditioned-materialization-v1"
+READOUT_VERSION = "atolia-v3-r17-joint-representative-conditioned-v2"
+_REPRESENTATIVE_SELECTION_MASS: dict[int, float] = {}
 
 
 def _strings(var: Any) -> list[str]:
@@ -31,7 +32,7 @@ def _strings(var: Any) -> list[str]:
     return [x.decode("utf-8") if isinstance(x, bytes) else str(x) for x in values]
 
 
-def _profile_step(runtime_fingerprint: str, profile_index: int, lo: int, hi: int) -> int:
+def _profile_step(runtime_fingerprint: str, profile_index: int, representative_index: int, lo: int, hi: int) -> int:
     lo = int(lo)
     hi = int(hi)
     if hi < lo:
@@ -40,7 +41,7 @@ def _profile_step(runtime_fingerprint: str, profile_index: int, lo: int, hi: int
         return lo
     raw = (
         READOUT_VERSION + "\0" + str(runtime_fingerprint) + "\0"
-        + str(int(profile_index)) + "\0loss-step"
+        + str(int(profile_index)) + "\0" + str(int(representative_index)) + "\0loss-step"
     ).encode("utf-8")
     draw = int.from_bytes(hashlib.sha256(raw).digest()[:8], "big")
     return lo + (draw % (hi - lo + 1))
@@ -70,17 +71,28 @@ def _cell_vectors(store: Any, global_cell: int) -> tuple[dict[str, float], dict[
     return deposition, field_mix
 
 
-def _profile_local_index(store: Any, profile_index: int, global_cell: int) -> int:
-    gp = store.ds.groups["profiles"]
-    ptr = gp.variables["cell_ptr"]
-    start = int(ptr[int(global_cell)])
-    stop = int(ptr[int(global_cell) + 1])
-    p = int(profile_index)
-    if p < start or p >= stop:
-        raise RuntimeError(
-            f"R17 profile {p} is outside its cell CSR interval {start}:{stop} for cell {global_cell}"
-        )
-    return p - start
+def _forced_assignment(store: Any, lineage: Any, stratum: Any, mode: str) -> tuple[Any, Any]:
+    weights = phase05._normalize_weights(stratum.deposition_mode_weights)
+    if mode not in weights or float(weights[mode]) <= 0.0:
+        raise RuntimeError(f"R17 representative deposition mode {mode!r} is incompatible with its cell grammar")
+    pool_id = phase05._stable_id("dep", lineage.loss_node_id, lineage.date_bc, mode)
+    assignment = phase05.DepositionAssignment(
+        particle_id=lineage.particle_id,
+        loss_site_id=lineage.loss_site_id,
+        deposition_pool_id=pool_id,
+        hydro_realization_id=store.canonical_hydro_id,
+        node_id=lineage.loss_node_id,
+        date_bc=lineage.date_bc,
+        mode=mode,
+        mode_probability=float(weights[mode]),
+        mode_weights=weights,
+        represented_weight=float(lineage.represented_weight),
+        expected_field_crossings=float(stratum.expected_field_crossings),
+        expected_physical_crossings=float(stratum.expected_physical_crossings),
+        hydro_context_score=float(store.canonical_hydro_context.get(lineage.loss_node_id, 0.0)),
+    )
+    observation = phase05.materialize_archaeology([lineage], [assignment])[0]
+    return assignment, observation
 
 
 def _install_prepare_profile(crystallizer: Any):
@@ -98,79 +110,124 @@ def _install_prepare_profile(crystallizer: Any):
         if crystallizer._cell_identity(store, global_cell, cell) != expected_cell:
             raise RuntimeError(f"R17 frozen production cell {global_cell} failed identity checkpoint")
 
-        # Validate the stored canonical profile itself.  We deliberately do not
-        # regenerate Phase-01 and compare against it; that would reintroduce the
-        # platform-sensitive threshold boundary this readout exists to remove.
         row: Mapping[str, Any] = store.expected_profile_row(p)
         expected_hash = bytes(np.asarray(store.profile_hash[p], dtype=np.uint8).tolist())
         if runtime_v3.profile_checkpoint_hash([row]) != expected_hash:
             raise RuntimeError(f"R17 profile {p} failed its stored Phase-01 checkpoint")
-
-        lineage_count = int(row["lineage_count"])
-        if lineage_count <= 0:
-            raise RuntimeError(f"R17 profile {p} has non-positive lineage_count")
-        loss_total = float(store.profile_loss[p])
-        represented_total = float(store.profile_represented[p])
         recorded_total = float(store.profile_recorded[p])
-        if not all(np.isfinite(x) and x > 0.0 for x in (loss_total, represented_total, recorded_total)):
-            raise RuntimeError(f"R17 profile {p} has invalid empirical weights")
+        if not np.isfinite(recorded_total) or recorded_total <= 0.0:
+            raise RuntimeError(f"R17 profile {p} has invalid archaeological weight")
 
+        rg = store.ds.groups.get("representatives")
+        if rg is None:
+            raise RuntimeError("R17 lacks joint empirical representatives")
+        ptr = rg.variables["profile_ptr"]
+        start = int(ptr[p])
+        stop = int(ptr[p + 1])
+        if stop <= start or stop - start > 2:
+            raise RuntimeError(f"R17 profile {p} has invalid representative interval {start}:{stop}")
+        mode_names = _strings(rg.variables["mode_name"])
         deposition, field_mix = _cell_vectors(store, global_cell)
-        step = _profile_step(
-            store.runtime_fingerprint,
-            p,
-            int(row["step_min"]),
-            int(row["step_max"]),
-        )
-        local_profile = _profile_local_index(store, p, global_cell)
 
-        # One deterministic materialized lineage represents this empirical
-        # profile.  Its statistical weight is the canonical mean lineage loss
-        # mass; profile selection itself remains weighted by the exact stored
-        # archaeological recorded mass.
-        per_lineage_loss = loss_total / float(lineage_count)
-        stratum = intensity.LossStratum(
-            production_cell=cell,
-            node_id=str(node_id),
-            step=int(step),
-            loss_intensity=float(per_lineage_loss),
-            deposition_mode_weights=deposition,
-            expected_recycle_count=float(row["expected_recycle_count_mean"]),
-            expected_repair_count=float(row["expected_repair_count_mean"]),
-            expected_source_entropy=float(row["expected_source_entropy_mean"]),
-            expected_field_crossings=float(row["expected_field_crossings_mean"]),
-            expected_physical_crossings=float(row["expected_physical_crossings_mean"]),
-            route_distance_from_origin_km=float(row["route_distance_from_origin_km_mean"]),
-            field_mix=field_mix,
-        )
+        candidates: list[Any] = []
+        empirical_mass = 0.0
+        for rep in range(start, stop):
+            if int(rg.variables["profile_index"][rep]) != p:
+                raise RuntimeError(f"R17 representative {rep} points to the wrong profile")
+            representative_mass = float(rg.variables["representative_recorded_mass"][rep])
+            represented_weight = float(rg.variables["source_represented_weight"][rep])
+            if not np.isfinite(representative_mass) or representative_mass <= 0.0:
+                raise RuntimeError(f"R17 representative {rep} has invalid empirical sampling mass")
+            if not np.isfinite(represented_weight) or represented_weight <= 0.0:
+                raise RuntimeError(f"R17 representative {rep} has invalid represented loss mass")
+            empirical_mass += representative_mass
+            _REPRESENTATIVE_SELECTION_MASS[int(rep)] = representative_mass
 
-        lineage = crystallizer.biography.materialize_loss_lineage(
-            store.world,
-            stratum,
-            world_seed=store.world_seed,
-            production_cell_index=global_cell,
-            cell_loss_index=local_profile,
-        )
-        assignment, observation = crystallizer._assignment_for(store, lineage, stratum)
-        candidate = crystallizer.PreparedCandidate(
-            global_cell,
-            local_profile,
-            stratum,
-            lineage,
-            assignment,
-            observation,
-        )
+            remelts_raw = float(rg.variables["remelt_count"][rep])
+            repairs_raw = float(rg.variables["repair_count"][rep])
+            remelts = int(round(remelts_raw))
+            repairs = int(round(repairs_raw))
+            if remelts < 0 or repairs < 0 or remelts_raw != float(remelts) or repairs_raw != float(repairs):
+                raise RuntimeError(f"R17 representative {rep} has non-integral event counts")
+            route_distance = float(rg.variables["cumulative_metal_distance_km"][rep])
+            source_entropy = float(rg.variables["source_entropy"][rep])
+            if not np.isfinite(route_distance) or route_distance < 0.0:
+                raise RuntimeError(f"R17 representative {rep} has invalid route extent")
+            if not np.isfinite(source_entropy) or not 0.0 <= source_entropy <= 1.0 + 1e-12:
+                raise RuntimeError(f"R17 representative {rep} has invalid source entropy")
 
-        # External-exchange materialization only needs the production cell from
-        # the sparse report lookup.  Never populate this with replayed strata.
+            mode_index = int(rg.variables["mode_index"][rep])
+            if mode_index < 0 or mode_index >= len(mode_names):
+                raise RuntimeError(f"R17 representative {rep} has invalid deposition-mode pointer")
+            mode = mode_names[mode_index]
+            step = _profile_step(
+                store.runtime_fingerprint,
+                p,
+                rep,
+                int(row["step_min"]),
+                int(row["step_max"]),
+            )
+
+            # Integer expected counts force the Phase-02 stochastic rounding to
+            # the actual representative remelt/repair counts while the retained
+            # route extent/source entropy condition the rest of the biography.
+            stratum = intensity.LossStratum(
+                production_cell=cell,
+                node_id=str(node_id),
+                step=int(step),
+                loss_intensity=represented_weight,
+                deposition_mode_weights=deposition,
+                expected_recycle_count=float(remelts),
+                expected_repair_count=float(repairs),
+                expected_source_entropy=source_entropy,
+                expected_field_crossings=float(row["expected_field_crossings_mean"]),
+                expected_physical_crossings=float(row["expected_physical_crossings_mean"]),
+                route_distance_from_origin_km=route_distance,
+                field_mix=field_mix,
+            )
+            lineage = crystallizer.biography.materialize_loss_lineage(
+                store.world,
+                stratum,
+                world_seed=store.world_seed,
+                production_cell_index=global_cell,
+                # The global representative coordinate is an intentional private
+                # identity salt. It distinguishes the two retained joint states
+                # without pretending to recover the discarded original loss-row index.
+                cell_loss_index=int(rep),
+            )
+            if lineage.remelt_count != remelts or lineage.repair_count != repairs:
+                raise RuntimeError(f"R17 representative {rep} event conditioning did not survive Phase-02")
+            if float(lineage.cumulative_metal_distance_km).hex() != float(route_distance).hex():
+                raise RuntimeError(f"R17 representative {rep} route conditioning did not survive Phase-02")
+            expected_mass = float(rg.variables["metal_mass_kg"][rep])
+            if float(lineage.batches[-1].metal_mass_kg).hex() != expected_mass.hex():
+                raise RuntimeError(f"R17 representative {rep} object mass differs from the empirical anchor")
+
+            assignment, observation = _forced_assignment(store, lineage, stratum, mode)
+            candidates.append(crystallizer.PreparedCandidate(
+                global_cell,
+                int(rep),
+                stratum,
+                lineage,
+                assignment,
+                observation,
+            ))
+
+        # Phase-08 assigns the profile's exact recorded mass across its retained
+        # representatives. This is an exact compression identity and therefore a
+        # useful direct R17 checkpoint independent of downstream rematerialization.
+        if empirical_mass.hex() != recorded_total.hex():
+            raise RuntimeError(
+                f"R17 profile {p} representative mass does not close: {empirical_mass.hex()} != {recorded_total.hex()}"
+            )
+
         if global_cell not in report_cache:
             report_cache[global_cell] = intensity.CellFlowReport(production_cell=cell)
-
         return crystallizer.PreparedProfile(
             p,
             global_cell,
             str(node_id),
-            [candidate],
+            candidates,
             recorded_total,
         )
 
@@ -178,6 +235,14 @@ def _install_prepare_profile(crystallizer: Any):
 
 
 def install(crystallizer: Any) -> str:
-    """Install the frozen-profile materializer into the existing crystallizer."""
+    """Install direct joint-representative materialization into the crystallizer."""
+    # Candidate selection must use the representative mass allocated by Phase-08,
+    # not the newly rematerialized Phase-05 observation weight. Keep the original
+    # behavior for any legacy candidate without a packed representative pointer.
+    crystallizer.PreparedCandidate.recorded_weight = property(
+        lambda self: float(_REPRESENTATIVE_SELECTION_MASS.get(
+            int(self.cell_loss_index), float(self.observation.recorded_weight)
+        ))
+    )
     crystallizer._prepare_profile = _install_prepare_profile(crystallizer)
     return READOUT_VERSION
