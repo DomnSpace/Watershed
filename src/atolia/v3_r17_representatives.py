@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-"""Pack/read Phase-08 joint empirical representatives inside final R17.
+"""Pack Phase-08 joint empirical representatives directly inside final R17.
 
-The 580 compact fragments are build-only inputs.  This module copies their
-small retained joint representatives into one NetCDF group so player creation can
-select a concrete conditioned latent state directly from R17 without replaying
-Phase-01 or shipping JSON fragments.
+The 580 compact fragments are build-only inputs. The final NetCDF retains their
+small joint representatives in one indexed group so player creation can select a
+concrete conditioned latent state without replaying Phase-01 or shipping JSON.
 """
 
 from collections import defaultdict
@@ -54,22 +53,6 @@ def _numvar(group: Any, name: str, dtype: str, dims: tuple[str, ...], values: An
         var[:] = arr
 
 
-def _profile_lookup(ds: Dataset) -> dict[tuple[int, str], int]:
-    gp = ds.groups["profiles"]
-    node_ids = _strings(ds.groups["world_nodes"].variables["node_id"])
-    world_build_id = str(ds.world_build_id)
-    cells = np.asarray(gp.variables["cell_index"][:], dtype=np.int64)
-    nodes = np.asarray(gp.variables["node_index"][:], dtype=np.int64)
-    out: dict[tuple[int, str], int] = {}
-    for p, (cell, node_idx) in enumerate(zip(cells, nodes)):
-        token = phase08.anonymous_token(world_build_id, "node", node_ids[int(node_idx)])
-        key = (int(cell), token)
-        if key in out:
-            raise RuntimeError(f"R17 profile key is not unique: {key}")
-        out[key] = int(p)
-    return out
-
-
 def append_representatives(
     runtime_path: Path,
     fragments_dir: Path,
@@ -77,18 +60,17 @@ def append_representatives(
     read_fragment: Any,
     semantic_fingerprint: Any,
 ) -> dict[str, int | str]:
-    """Append all retained joint representatives to an already-built R17.
-
-    The operation is deterministic and self-contained: all fragment-local
-    dictionaries and indexes are translated to one global R17 coordinate system.
-    """
     runtime_path = Path(runtime_path)
     fragments_dir = Path(fragments_dir)
-    paths = sorted(fragments_dir.rglob("compact-*.json.gz"), key=lambda p: int(p.name.removeprefix("compact-").removesuffix(".json.gz")))
+    paths = sorted(
+        fragments_dir.rglob("compact-*.json.gz"),
+        key=lambda p: int(p.name.removeprefix("compact-").removesuffix(".json.gz")),
+    )
     if not paths:
         raise RuntimeError("cannot pack R17 representatives without Phase-08 compact fragments")
 
-    # Pass 1: counts and small global dictionaries only.
+    # Pass 1: counts and tiny global dictionaries only. No representative rows
+    # or profile lookup table are retained in RAM.
     total_rep = total_el = total_src = total_pb = total_op = 0
     mode_names: set[str] = set()
     element_names: set[str] = set()
@@ -115,9 +97,13 @@ def append_representatives(
     with Dataset(runtime_path, "r+") as ds:
         if "representatives" in ds.groups:
             raise RuntimeError("R17 already contains representative group; rebuild from a clean output")
-        lookup = _profile_lookup(ds)
-        profile_count = int(ds.groups["profiles"].profile_count)
+        gp = ds.groups["profiles"]
+        profile_count = int(gp.profile_count)
+        profile_cell = gp.variables["cell_index"]
+        profile_node = gp.variables["node_index"]
+        node_ids = _strings(ds.groups["world_nodes"].variables["node_id"])
         world_build_id = str(ds.world_build_id)
+        node_tokens = [phase08.anonymous_token(world_build_id, "node", node_id) for node_id in node_ids]
         source_ids = _strings(ds.groups["world_sources"].variables["source_id"])
         source_token_to_index = {
             phase08.anonymous_token(world_build_id, "source", source_id): i
@@ -162,8 +148,9 @@ def append_representatives(
         op_name = g.createVariable("operation_type_index", "i2", ("operation_row",), zlib=True, complevel=6, shuffle=True)
         op_count = g.createVariable("operation_count", "i2", ("operation_row",), zlib=True, complevel=6, shuffle=True)
 
-        profile_counts = np.zeros(profile_count, dtype=np.int64)
+        profile_counts = np.zeros(profile_count, dtype=np.int8)
         rep_cursor = el_cursor = src_cursor = pb_cursor = op_cursor = 0
+        profile_cursor = 0
 
         for path in paths:
             fragment = read_fragment(path)
@@ -171,14 +158,25 @@ def append_representatives(
             d = fragment["dictionary"]
             pcols = {name: i for i, name in enumerate(fragment["columns"]["profile"])}
             rcols = {name: i for i, name in enumerate(fragment["columns"]["representative"])}
+
+            # Core R17 writes profiles in exactly Phase-08 order: ordinal -> cell
+            # -> node token. Validate that order while translating local profile
+            # indexes instead of constructing a multi-million-entry Python dict.
             local_profile_to_global: list[int] = []
-            for prow in fragment["profiles"]:
+            for local_profile, prow in enumerate(fragment["profiles"]):
+                global_profile = profile_cursor + local_profile
+                if global_profile >= profile_count:
+                    raise RuntimeError("Phase-08 profile stream exceeds R17 profile field")
                 local_cell = int(prow[pcols["cell"]])
                 node_token = str(d["node"][int(prow[pcols["loss_node"]])])
-                key = (start + local_cell, node_token)
-                global_profile = lookup.get(key)
-                if global_profile is None:
-                    raise RuntimeError(f"Phase-08 representative profile does not resolve in R17: {key}")
+                expected_cell = start + local_cell
+                observed_cell = int(profile_cell[global_profile])
+                observed_node_token = node_tokens[int(profile_node[global_profile])]
+                if observed_cell != expected_cell or observed_node_token != node_token:
+                    raise RuntimeError(
+                        f"Phase-08/R17 profile ordering mismatch at global profile {global_profile}: "
+                        f"cell {observed_cell}/{expected_cell}, node {observed_node_token}/{node_token}"
+                    )
                 local_profile_to_global.append(global_profile)
 
             local_rep_to_global: list[int] = []
@@ -223,7 +221,19 @@ def append_representatives(
                     rep_numeric[name][sl] = out_numeric[name]
                 rep_cursor += n
 
-            def _write_sparse(rows: list[list[Any]], columns_name: str, cursor: int, rep_var: Any, name_var: Any, value_var: Any, dictionary_name: str, global_index: dict[str, int] | None, value_field: str, count_value: bool = False) -> int:
+            def _write_sparse(
+                rows: list[list[Any]],
+                columns_name: str,
+                cursor: int,
+                rep_var: Any,
+                name_var: Any,
+                value_var: Any,
+                dictionary_name: str,
+                global_index: dict[str, int] | None,
+                value_field: str,
+                *,
+                count_value: bool = False,
+            ) -> int:
                 if not rows:
                     return cursor
                 cols = {name: i for i, name in enumerate(fragment["columns"][columns_name])}
@@ -231,12 +241,13 @@ def append_representatives(
                 rarr = np.empty(m, dtype=np.int32)
                 narr = np.empty(m, dtype=np.int32 if dictionary_name == "source" else np.int16)
                 varr = np.empty(m, dtype=np.int16 if count_value else np.float64)
+                key_column = dictionary_name
                 for j, row in enumerate(rows):
                     lr = int(row[cols["representative"]])
                     if lr < 0 or lr >= len(local_rep_to_global):
                         raise RuntimeError(f"sparse representative index outside fragment: {lr}")
                     rarr[j] = local_rep_to_global[lr]
-                    raw_name = str(d[dictionary_name][int(row[cols[dictionary_name if dictionary_name != 'operation_type' else 'operation_type']])])
+                    raw_name = str(d[dictionary_name][int(row[cols[key_column]])])
                     if dictionary_name == "source":
                         idx = source_token_to_index.get(raw_name)
                         if idx is None:
@@ -256,7 +267,10 @@ def append_representatives(
             src_cursor = _write_sparse(fragment["representative_sources"], "representative_source", src_cursor, src_rep, src_name, src_value, "source", None, "fraction")
             pb_cursor = _write_sparse(fragment["representative_pb_sources"], "representative_pb_source", pb_cursor, pb_rep, pb_name, pb_value, "source", None, "fraction_of_pb")
             op_cursor = _write_sparse(fragment["representative_operations"], "representative_operation", op_cursor, op_rep, op_name, op_count, "operation_type", operation_index, "count", count_value=True)
+            profile_cursor += len(fragment["profiles"])
 
+        if profile_cursor != profile_count:
+            raise RuntimeError(f"Phase-08 representative pack covered {profile_cursor} profiles, expected {profile_count}")
         if rep_cursor != total_rep or el_cursor != total_el or src_cursor != total_src or pb_cursor != total_pb or op_cursor != total_op:
             raise RuntimeError("R17 representative packing row counts changed during write")
         if np.any(profile_counts <= 0) or np.any(profile_counts > 2):
@@ -265,12 +279,13 @@ def append_representatives(
         profile_ptr = np.zeros(profile_count + 1, dtype=np.int64)
         profile_ptr[1:] = np.cumsum(profile_counts, dtype=np.int64)
         _numvar(g, "profile_ptr", "i8", ("profile_ptr_dim",), profile_ptr)
+        if int(profile_ptr[-1]) != total_rep:
+            raise RuntimeError("R17 representative profile CSR does not close")
         g.source = "phase08-joint-empirical-representatives-packed-directly-into-r17"
         g.conditioning_policy = "player-key-selects-profile-then-retained-joint-representative;phase01-not-replayed"
         g.representative_count = int(total_rep)
         g.profile_count = int(profile_count)
 
-        # The new group is authoritative and must participate in the R17 semantic digest.
         ds.runtime_fingerprint = semantic_fingerprint(ds)
         fingerprint = str(ds.runtime_fingerprint)
 
