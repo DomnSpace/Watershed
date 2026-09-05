@@ -14,10 +14,15 @@ if str(ATOLIA) not in sys.path:
     sys.path.insert(0, str(ATOLIA))
 
 import v3_player_crystallizer as crystallizer
+import v3_lazy_profile_store
 import v3_profile_readout
 import v3_player_integrity as player_integrity
 import v3_player_netcdf as player_netcdf
 import v3_player_rep_pointer
+
+# Keep the canonical global profile-CDF semantics while reading only the small
+# cell boundary index plus selected profile slices from R17.
+v3_lazy_profile_store.install(crystallizer)
 
 # R17 is the authoritative frozen latent field. Install the direct representative
 # readout before any player is crystallized so the client never replays the
