@@ -10,7 +10,8 @@ Phase-01 active/loss threshold.
 The representative is not copied into player_17 as a finished object. Its joint
 state conditions a fresh coherent Phase-02 -> Phase-03 -> Phase-04 -> Phase-05
 expansion: actual represented loss mass, realized remelt/repair counts, route
-extent, source entropy and deposition mode enter the downstream model together.
+extent, retained source mixture/entropy and deposition mode enter the downstream
+model together.
 """
 
 import hashlib
@@ -23,7 +24,7 @@ import v3_hydro_exchange_deposition as phase05
 import v3_runtime_v3 as runtime_v3
 
 
-READOUT_VERSION = "atolia-v3-r17-joint-representative-conditioned-v2"
+READOUT_VERSION = "atolia-v3-r17-joint-representative-conditioned-v3"
 _REPRESENTATIVE_SELECTION_MASS: dict[int, float] = {}
 
 
@@ -69,6 +70,45 @@ def _cell_vectors(store: Any, global_cell: int) -> tuple[dict[str, float], dict[
     if not field_mix or not np.isfinite(field_values).all():
         raise RuntimeError(f"R17 production cell {global_cell} has invalid transport-field readout")
     return deposition, field_mix
+
+
+def _conditioned_cell(store: Any, rg: Any, representative: int, base_cell: Any) -> Any:
+    """Use the retained representative's joint final source ancestry as latent source mix.
+
+    This does not modify the canonical R17 production cell. It creates the
+    private conditioned input used for one player's downstream materialization.
+    Because every recycle addition sees the same conditioned source mixture, the
+    final Phase-02 ancestry preserves the representative's source support and
+    entropy while the canonical cell identity remains separately auditable.
+    """
+    if "source_ptr" not in rg.variables:
+        raise RuntimeError("R17 representative source CSR is missing")
+    rep = int(representative)
+    ptr = rg.variables["source_ptr"]
+    a, z = int(ptr[rep]), int(ptr[rep + 1])
+    source_ids = list(store.world.sources)
+    indices = np.asarray(rg.variables["source_index"][a:z], dtype=np.int64)
+    fractions = np.asarray(rg.variables["source_fraction"][a:z], dtype=np.float64)
+    if not len(indices):
+        return base_cell
+    if np.any(indices < 0) or np.any(indices >= len(source_ids)) or np.any(~np.isfinite(fractions)) or np.any(fractions < 0.0):
+        raise RuntimeError(f"R17 representative {rep} has invalid source conditioning rows")
+    mix = {source_ids[int(i)]: float(v) for i, v in zip(indices, fractions) if float(v) > 0.0}
+    total = float(sum(mix.values()))
+    if not mix or abs(total - 1.0) > 2e-12:
+        raise RuntimeError(f"R17 representative {rep} source fractions do not close to one: {total!r}")
+    return intensity.ProductionCell(
+        bundle_id=base_cell.bundle_id,
+        bundle_family=base_cell.bundle_family,
+        object_class=base_cell.object_class,
+        date_bc=base_cell.date_bc,
+        origin=base_cell.origin,
+        destination=base_cell.destination,
+        production_intensity=base_cell.production_intensity,
+        circulation_seed_intensity=base_cell.circulation_seed_intensity,
+        source_mix=mix,
+        recycle_mean=base_cell.recycle_mean,
+    )
 
 
 def _forced_assignment(store: Any, lineage: Any, stratum: Any, mode: str) -> tuple[Any, Any]:
@@ -167,12 +207,14 @@ def _install_prepare_profile(crystallizer: Any):
                 int(row["step_min"]),
                 int(row["step_max"]),
             )
+            conditioned_cell = _conditioned_cell(store, rg, rep, cell)
 
             # Integer expected counts force the Phase-02 stochastic rounding to
-            # the actual representative remelt/repair counts while the retained
-            # route extent/source entropy condition the rest of the biography.
+            # the actual representative remelt/repair counts. The joint retained
+            # source mixture, entropy and route extent then propagate through the
+            # ordinary Phase-02/03 machinery rather than being copied as outputs.
             stratum = intensity.LossStratum(
-                production_cell=cell,
+                production_cell=conditioned_cell,
                 node_id=str(node_id),
                 step=int(step),
                 loss_intensity=represented_weight,
@@ -191,7 +233,7 @@ def _install_prepare_profile(crystallizer: Any):
                 world_seed=store.world_seed,
                 production_cell_index=global_cell,
                 # The global representative coordinate is an intentional private
-                # identity salt. It distinguishes the two retained joint states
+                # identity salt. It distinguishes the retained joint states
                 # without pretending to recover the discarded original loss-row index.
                 cell_loss_index=int(rep),
             )
@@ -214,8 +256,8 @@ def _install_prepare_profile(crystallizer: Any):
             ))
 
         # Phase-08 assigns the profile's exact recorded mass across its retained
-        # representatives. This is an exact compression identity and therefore a
-        # useful direct R17 checkpoint independent of downstream rematerialization.
+        # representatives. This is an exact compression identity independent of
+        # the downstream private rematerialization.
         if empirical_mass.hex() != recorded_total.hex():
             raise RuntimeError(
                 f"R17 profile {p} representative mass does not close: {empirical_mass.hex()} != {recorded_total.hex()}"
@@ -236,9 +278,8 @@ def _install_prepare_profile(crystallizer: Any):
 
 def install(crystallizer: Any) -> str:
     """Install direct joint-representative materialization into the crystallizer."""
-    # Candidate selection must use the representative mass allocated by Phase-08,
-    # not the newly rematerialized Phase-05 observation weight. Keep the original
-    # behavior for any legacy candidate without a packed representative pointer.
+    # Candidate selection uses the exact representative mass allocated by
+    # Phase-08, not the newly rematerialized Phase-05 observation weight.
     crystallizer.PreparedCandidate.recorded_weight = property(
         lambda self: float(_REPRESENTATIVE_SELECTION_MASS.get(
             int(self.cell_loss_index), float(self.observation.recorded_weight)
