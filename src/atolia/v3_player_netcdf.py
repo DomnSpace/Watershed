@@ -45,7 +45,9 @@ def _write_str_var(group: Any, name: str, dim: str, values: Sequence[str]) -> No
 
 def _write_num(group: Any, name: str, dtype: str, dims: tuple[str, ...], values: Any) -> None:
     var = group.createVariable(name, dtype, dims, zlib=True, complevel=6, shuffle=True)
-    var[:] = np.asarray(values)
+    arr = np.asarray(values)
+    if arr.size:
+        var[:] = arr
 
 
 def write_player_netcdf(
@@ -72,6 +74,7 @@ def write_player_netcdf(
             "object_id": _object_id(state.player_key_hash, lin.particle_id),
             "particle": _token(state.world_build_id, "particle", lin.particle_id),
             "selection_index": i,
+            "runtime_profile_index": int(selected_row.runtime_profile_index),
             "global_cell_index": cand.global_cell_index,
             "cell_loss_index": cand.cell_loss_index,
             "object_class": lin.object_class,
@@ -280,16 +283,19 @@ def write_player_netcdf(
         ds.objects_per_level = 10
         ds.canonical_hydro_realization_id = state.canonical_hydro_realization_id
 
+        # NetCDF dimensions are encoded as HDF5 dimension-scale datasets.  Avoid
+        # root dimension names that are identical to root group names; some
+        # netCDF-C/HDF5 builds fail when the scale is first attached on write.
         dims = {
             "object": runtime_v3.TARGET_OBJECTS,
             "deposition_mode": len(modes),
             "batch": len(batch_rows),
-            "batch_ancestry": len(batch_ancestry),
+            "batch_ancestry_row": len(batch_ancestry),
             "batch_parent": len(batch_parent),
             "episode": len(episode_rows),
             "event": len(event_rows),
             "event_input": len(event_inputs),
-            "chemistry": len(chemistry_rows),
+            "chemistry_row": len(chemistry_rows),
             "element_row": len(element_rows),
             "isotope_row": len(isotope_rows),
             "pb_source": len(pb_source_rows),
@@ -315,6 +321,7 @@ def write_player_netcdf(
         _write_num(go, "selection_index", "i4", ("object",), [row["selection_index"] for row in core_rows])
         _write_num(go, "career_level", "i2", ("object",), [i // 10 + 1 for i in range(len(core_rows))])
         _write_num(go, "career_slot", "i1", ("object",), [i % 10 for i in range(len(core_rows))])
+        _write_num(go, "runtime_profile_index", "i8", ("object",), [row["runtime_profile_index"] for row in core_rows])
         _write_num(go, "global_cell_index", "i4", ("object",), [row["global_cell_index"] for row in core_rows])
         _write_num(go, "cell_loss_index", "i4", ("object",), [row["cell_loss_index"] for row in core_rows])
         _write_num(go, "date_bc", "i4", ("object",), [row["date_bc"] for row in core_rows])
@@ -347,10 +354,10 @@ def write_player_netcdf(
             _write_num(gb, name, dtype, ("batch",), [r[name] for r in batch_rows])
 
         ga = ds.createGroup("batch_ancestry")
-        _write_num(ga, "batch_row", "i4", ("batch_ancestry",), [r["batch_row"] for r in batch_ancestry])
-        _write_str_var(ga, "source_token", "batch_ancestry", [r["source"] for r in batch_ancestry])
-        _write_num(ga, "mass_kg", "f8", ("batch_ancestry",), [r["mass_kg"] for r in batch_ancestry])
-        _write_num(ga, "fraction", "f8", ("batch_ancestry",), [r["fraction"] for r in batch_ancestry])
+        _write_num(ga, "batch_row", "i4", ("batch_ancestry_row",), [r["batch_row"] for r in batch_ancestry])
+        _write_str_var(ga, "source_token", "batch_ancestry_row", [r["source"] for r in batch_ancestry])
+        _write_num(ga, "mass_kg", "f8", ("batch_ancestry_row",), [r["mass_kg"] for r in batch_ancestry])
+        _write_num(ga, "fraction", "f8", ("batch_ancestry_row",), [r["fraction"] for r in batch_ancestry])
 
         gp = ds.createGroup("batch_parents")
         _write_num(gp, "batch_row", "i4", ("batch_parent",), [r["batch_row"] for r in batch_parent])
@@ -377,10 +384,10 @@ def write_player_netcdf(
         _write_str_var(gei, "batch_token", "event_input", [r["batch"] for r in event_inputs])
 
         gc = ds.createGroup("chemistry")
-        _write_num(gc, "object_index", "i4", ("chemistry",), [r["object"] for r in chemistry_rows])
-        _write_str_var(gc, "batch_token", "chemistry", [r["batch"] for r in chemistry_rows])
+        _write_num(gc, "object_index", "i4", ("chemistry_row",), [r["object"] for r in chemistry_rows])
+        _write_str_var(gc, "batch_token", "chemistry_row", [r["batch"] for r in chemistry_rows])
         for name in ("metal_mass_kg", "Pb206_204", "Pb207_204", "Pb208_204"):
-            _write_num(gc, name, "f8", ("chemistry",), [r[name] for r in chemistry_rows])
+            _write_num(gc, name, "f8", ("chemistry_row",), [r[name] for r in chemistry_rows])
 
         gel = ds.createGroup("elements")
         _write_num(gel, "chemistry_row", "i4", ("element_row",), [r["chemistry_row"] for r in element_rows])
