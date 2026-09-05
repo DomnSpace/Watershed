@@ -14,8 +14,14 @@ if str(ATOLIA) not in sys.path:
     sys.path.insert(0, str(ATOLIA))
 
 import v3_player_crystallizer as crystallizer
+import v3_profile_readout
 import v3_player_integrity as player_integrity
 import v3_player_netcdf as player_netcdf
+
+# R17 is the authoritative frozen latent field.  Install the weather-readout
+# materializer before any player is crystallized so the client never replays the
+# platform-sensitive Phase-01 circulation threshold.
+v3_profile_readout.install(crystallizer)
 
 
 def generate_player_netcdf(
