@@ -86,8 +86,13 @@ def validate_structure(ds: Dataset) -> list[str]:
     selection = np.asarray(objects.variables["selection_index"][:], dtype=np.int64)
     if not np.array_equal(selection, np.arange(runtime_v3.TARGET_OBJECTS, dtype=np.int64)):
         raise ValueError("player_17.nc selection order is not the canonical 0..299 sequence")
+    if "runtime_profile_index" not in objects.variables:
+        raise ValueError("player_17.nc does not retain its R17 profile pointers")
+    profile_pointer = np.asarray(objects.variables["runtime_profile_index"][:], dtype=np.int64)
+    if profile_pointer.size != runtime_v3.TARGET_OBJECTS or np.any(profile_pointer < 0):
+        raise ValueError("player_17.nc contains invalid R17 profile pointers")
 
-    batch_n = len(ds.dimensions["batch"]); chemistry_n = len(ds.dimensions["chemistry"])
+    batch_n = len(ds.dimensions["batch"]); chemistry_n = len(ds.dimensions["chemistry_row"])
     event_n = len(ds.dimensions["event"]); operation_n = len(ds.dimensions["operation"])
     for group, variable in (
         ("biography_batches", "object_index"), ("episodes", "object_index"), ("events", "object_index"),
