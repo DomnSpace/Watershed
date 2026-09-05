@@ -17,9 +17,10 @@ import v3_player_crystallizer as crystallizer
 import v3_profile_readout
 import v3_player_integrity as player_integrity
 import v3_player_netcdf as player_netcdf
+import v3_player_rep_pointer
 
-# R17 is the authoritative frozen latent field.  Install the weather-readout
-# materializer before any player is crystallized so the client never replays the
+# R17 is the authoritative frozen latent field. Install the direct representative
+# readout before any player is crystallized so the client never replays the
 # platform-sensitive Phase-01 circulation threshold.
 v3_profile_readout.install(crystallizer)
 
@@ -45,6 +46,9 @@ def generate_player_netcdf(
         output_path,
         progress_callback=progress_callback,
     )
+    # Persist the exact R17 representative coordinate after the ordinary writer
+    # has completed. The deep finalizer below includes it in the semantic digest.
+    v3_player_rep_pointer.append_player_representative_pointers(state, output_path)
     # v3_player_netcdf historically fingerprinted only the object header rows.
     # Replace that transient attribute with a digest of every hidden table and
     # simultaneously validate all foreign-key/chemistry/deposition invariants.
