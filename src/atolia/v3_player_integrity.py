@@ -91,6 +91,11 @@ def validate_structure(ds: Dataset) -> list[str]:
     profile_pointer = np.asarray(objects.variables["runtime_profile_index"][:], dtype=np.int64)
     if profile_pointer.size != runtime_v3.TARGET_OBJECTS or np.any(profile_pointer < 0):
         raise ValueError("player_17.nc contains invalid R17 profile pointers")
+    if "runtime_representative_index" not in objects.variables:
+        raise ValueError("player_17.nc does not retain its R17 joint representative pointers")
+    representative_pointer = np.asarray(objects.variables["runtime_representative_index"][:], dtype=np.int64)
+    if representative_pointer.size != runtime_v3.TARGET_OBJECTS or np.any(representative_pointer < 0):
+        raise ValueError("player_17.nc contains invalid R17 representative pointers")
 
     batch_n = len(ds.dimensions["batch"]); chemistry_n = len(ds.dimensions["chemistry_row"])
     event_n = len(ds.dimensions["event"]); operation_n = len(ds.dimensions["operation"])
