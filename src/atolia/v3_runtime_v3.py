@@ -8,9 +8,9 @@ from typing import Any, Mapping, Sequence
 
 from v3_phase08_runtime_fragment import anonymous_token
 
-RUNTIME_SCHEMA = "atolia-v3-r17-frozen-field-v2"
-PLAYER_SCHEMA = "dr-corrosion-player-17-netcdf-v1"
-GENERATOR_VERSION = "atolia-v3-r17-keyed-acquisition-v2"
+RUNTIME_SCHEMA = "atolia-v3-r17-frozen-field-v3"
+PLAYER_SCHEMA = "dr-corrosion-player-17-netcdf-v2"
+GENERATOR_VERSION = "atolia-v3-r17-keyed-acquisition-v3"
 CELL_HASH_POLICY = "sha256-canonical-json-float-hex-v1"
 PROFILE_HASH_POLICY = "sha256-profile-node-ordered-float-hex-v1"
 TARGET_OBJECTS = 300
