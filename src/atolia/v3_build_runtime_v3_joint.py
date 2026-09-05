@@ -10,6 +10,7 @@ from typing import Any
 import v3_build_runtime_v3 as core
 import v3_build_runtime_v3_repaired_hydro_impl as repaired
 import v3_r17_representatives as representatives
+import v3_r17_rep_indexes as rep_indexes
 
 
 def build_runtime(**kwargs: Any) -> dict[str, Any]:
@@ -21,6 +22,10 @@ def build_runtime(**kwargs: Any) -> dict[str, Any]:
         semantic_fingerprint=core._semantic_runtime_fingerprint,
     )
     result.update(packed)
+    result.update(rep_indexes.append_sparse_indexes(
+        Path(kwargs["out_path"]),
+        semantic_fingerprint=core._semantic_runtime_fingerprint,
+    ))
     out = Path(kwargs["out_path"])
     result["bytes"] = int(out.stat().st_size)
     return result
