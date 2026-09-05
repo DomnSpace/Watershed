@@ -30,7 +30,7 @@ def validate_r17(path: Path) -> dict[str, object]:
             raise RuntimeError("R17 lacks the frozen-world table")
         if int(ds.population_cells) != 37100 or int(ds.target_player_objects) != 300:
             raise RuntimeError("R17 cell/player dimensions are wrong")
-        for group in ("world_nodes", "world_edges", "world_sources", "world_bundles", "world_workshops", "world_guilds", "production_cells", "profiles", "canonical_hydro", "integrity"):
+        for group in ("world_nodes", "world_edges", "world_sources", "world_bundles", "world_workshops", "world_guilds", "production_cells", "profiles", "representatives", "canonical_hydro", "integrity"):
             if group not in ds.groups:
                 raise RuntimeError(f"R17 missing group {group}")
         if str(getattr(ds, "hypothesis_storage", "")) != "not-shipped-compiled-into-frozen-field":
@@ -38,8 +38,12 @@ def validate_r17(path: Path) -> dict[str, object]:
         if "hypothesis_bytes" in ds.variables:
             raise RuntimeError("R17 contains plaintext hypothesis bytes")
         profiles = int(ds.groups["profiles"].profile_count)
-        if profiles <= 0:
-            raise RuntimeError("R17 profile field is empty")
+        reps = int(ds.groups["representatives"].representative_count)
+        ptr = ds.groups["representatives"].variables["profile_ptr"]
+        if profiles <= 0 or reps <= 0:
+            raise RuntimeError("R17 profile/representative field is empty")
+        if len(ptr) != profiles + 1 or int(ptr[0]) != 0 or int(ptr[-1]) != reps:
+            raise RuntimeError("R17 representative CSR is malformed")
         fingerprint = str(getattr(ds, "runtime_fingerprint", ""))
         if len(fingerprint) != 64:
             raise RuntimeError("R17 runtime fingerprint is malformed")
@@ -47,6 +51,7 @@ def validate_r17(path: Path) -> dict[str, object]:
             "schema": str(ds.schema),
             "cells": int(ds.population_cells),
             "profiles": profiles,
+            "representatives": reps,
             "fingerprint": fingerprint,
             "bytes": path.stat().st_size,
         }
@@ -91,7 +96,7 @@ def main() -> None:
         print("A/A full semantic fingerprint:", a1["player_state_fingerprint"])
         print("B full semantic fingerprint:", b["player_state_fingerprint"])
         print("A/B object overlap:", overlap, "/ 300")
-        print("PASS: frozen R17 -> deterministic A/A -> divergent B -> deep player_17 validation")
+        print("PASS: joint R17 -> deterministic A/A -> divergent B -> deep player_17 validation")
         if not owned_temp:
             print("kept smoke files in", out)
     finally:
