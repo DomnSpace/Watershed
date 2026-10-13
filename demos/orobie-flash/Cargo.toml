@@ -1,0 +1,13 @@
+[package]
+name = "orobie_flash"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+macroquad = "0.4.16"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
