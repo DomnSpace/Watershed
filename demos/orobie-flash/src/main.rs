@@ -181,7 +181,7 @@ fn dashboard(sim:&Model,source:&str,paused:bool,seconds:f32,show_rain:bool) {
 #[macroquad::main(window_conf)]
 async fn main() {
     let terrain=terrain::load();
-    let source=terrain.label;
+    let source=if terrain.is_real { "EXTERNAL DEM / SYNTHETIC STORM" } else { terrain.label };
     let mut sim=Model::new(terrain.z,terrain.cell_m);
     let min_z=sim.z.iter().copied().fold(f32::MAX,f32::min);
     let ground=surface_mesh(&sim,min_z,false);
