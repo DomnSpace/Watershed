@@ -1,0 +1,7 @@
+/target/
+/dist/
+/raw_inputs/
+/data/orobie/
+/data/euganei/
+__pycache__/
+*.pyc
