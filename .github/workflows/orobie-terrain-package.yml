@@ -1,0 +1,83 @@
+name: Orobie + Euganei real terrain Windows package
+on:
+  push:
+    branches:
+      - feat/orobie-flash-flood-rust
+    paths:
+      - '.github/workflows/orobie-terrain-package.yml'
+  workflow_dispatch:
+
+jobs:
+  prepare_real_dem:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install open public DEM acquisition and warp dependencies
+        run: python -m pip install numpy rasterio pyproj boto3 requests
+      - name: Download actual Copernicus GLO30 DSM with 90m fallback
+        working-directory: demos/orobie-flash
+        run: python tools/fetch_inputs.py --region both --dem
+      - name: Build verified georeferenced 100km and 8km tile packs
+        working-directory: demos/orobie-flash
+        shell: bash
+        run: |
+          python - <<'PY'
+          import sys, subprocess
+          from pathlib import Path
+          dem = sorted(Path("raw_inputs/dem").rglob("*.tif"),key=lambda p:("90m" in str(p),str(p)))
+          if not dem:
+              raise RuntimeError("No REAL public Copernicus DEM files downloaded")
+          for region in ["orobie","euganei"]:
+              subprocess.check_call([sys.executable,"tools/build_regions.py","--region",region,"--dem",*[str(p) for p in dem]])
+              for name in ("overview.asc","focus.asc","provenance.json"):
+                  assert (Path("data")/region/name).stat().st_size>1000
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: georeferenced-public-dem-packs
+          path: |
+            demos/orobie-flash/data/orobie/
+            demos/orobie-flash/data/euganei/
+          if-no-files-found: error
+          retention-days: 30
+  package_windows:
+    needs: prepare_real_dem
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: demos/orobie-flash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: georeferenced-public-dem-packs
+          path: demos/orobie-flash/data
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: demos/orobie-flash
+      - name: Test and compile native release
+        run: |
+          cargo test --release
+          cargo build --release
+      - name: Package native runner alongside licensed DEM derivatives
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/orobie_flash.exe dist/orobie_flash.exe
+          Copy-Item README.md dist/README.md
+          Copy-Item data dist/data -Recurse
+          if (!(Test-Path dist/data/orobie/overview.asc) -or !(Test-Path dist/data/euganei/overview.asc)) {
+            throw "Both real DEM datasets must be present in packaged runner."
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OROBIE-EUGANEI-real-DEM-Windows-x64
+          path: demos/orobie-flash/dist/
+          if-no-files-found: error
+          retention-days: 30
