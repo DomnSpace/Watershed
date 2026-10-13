@@ -160,10 +160,13 @@ mod tests {
         m.peak_mm_h=0.;
         let i=Model::idx(N/2,N/2);
         m.h[i]=0.75;
+        let initial_m3 = m.storage_m3();
         for _ in 0..15 { m.step(4.); }
         assert!(m.h[Model::idx(N/2,N/2+1)]>0.);
         assert!(m.h.iter().all(|v| *v>=0. && v.is_finite()));
-        assert!(m.balance_m3().abs() < 470., "account for externally seeded water");
+        let accounted = m.storage_m3() + m.infiltration_m3 + m.outlet_m3;
+        assert!((initial_m3-accounted).abs() < initial_m3*0.0005,
+            "seeded-water balance: initial {initial_m3}, accounted {accounted}");
     }
     #[test]
     fn reproducible_replay() {
