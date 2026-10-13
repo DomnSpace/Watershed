@@ -5,7 +5,7 @@ use macroquad::models::{Mesh, Vertex};
 use crate::terrain::{Grid,MAP_N};
 
 const SPAN: f32 = 112.;
-const PATCH: usize = 32;
+const PATCH: usize = 64;
 
 pub struct Surface {
     pub land: Vec<Mesh>,
