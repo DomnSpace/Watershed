@@ -1,0 +1,117 @@
+{
+  "schema": "orobie_flash.study_areas.v1",
+  "version": 1,
+  "status": "SOURCE_MANIFEST_ONLY_NO_ELEVATION_OR_FLOOD_DATA_IN_REPOSITORY",
+  "target_crs": "EPSG:32632",
+  "target_size_m": [
+    100000,
+    100000
+  ],
+  "flood_reference": {
+    "publisher": "JRC/Copernicus EMS GloFAS",
+    "version": "2.1.2",
+    "original_resolution": "3 arc seconds (~90 m)",
+    "depth_unit": "m",
+    "kind": "static maximum modeled riverine inundation depth, not dynamic rainfall runoff",
+    "base_url": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-GLOFAS/flood_hazard/",
+    "source_readme": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-GLOFAS/flood_hazard/README.txt",
+    "available_return_years": [
+      10,
+      20,
+      50,
+      75,
+      100,
+      200,
+      500
+    ],
+    "unavailable_return_years": [
+      1000
+    ],
+    "warning": "RP1000 must be sourced from a separate license or clearly labelled extreme-value extrapolation. 10-year rainfall is not 10-year river flooding. Regional PGRA maps supersede for local hazard interpretation."
+  },
+  "scenes": [
+    {
+      "id": "orobie",
+      "label": "Orobie / Upper Serio",
+      "focus": "Valbondione",
+      "center_wgs84": [
+        10.007,
+        46.04
+      ],
+      "center_epsg32632_m": [
+        577918,
+        5098985
+      ],
+      "bbox_epsg32632_m": [
+        527918,
+        5048985,
+        627918,
+        5148985
+      ],
+      "terrain": [
+        {
+          "source": "Lombardia DTM 5X5 (2015)",
+          "kind": "DTM",
+          "resolution_m": 5,
+          "status": "requires acquisition",
+          "url": "https://www.geoportale.regione.lombardia.it/download-dati"
+        },
+        {
+          "source": "Copernicus GLO-30 DSM",
+          "kind": "DSM fallback",
+          "resolution_m_approx": 30,
+          "status": "requires acquisition",
+          "url": "https://registry.opendata.aws/copernicus-dem/"
+        }
+      ],
+      "flood_tiles_by_10degree_lon": [
+        "ID115_N40_W0",
+        "ID123_N40_E10"
+      ],
+      "primary_rainfall_source": "https://idro.arpalombardia.it/manual/lsppdoc.pdf",
+      "authority_pgra": "https://www.regione.lombardia.it/ambiente-e-territorio/pianificazione-territoriale/pianificazione-di-bacino/piano-di-gestione-rischio-alluvioni-nel-bacino-del-fiume-po-pgra"
+    },
+    {
+      "id": "euganei",
+      "label": "Euganei / Padua floodplain",
+      "focus": "Colli Euganei",
+      "center_wgs84": [
+        11.687,
+        45.315
+      ],
+      "center_epsg32632_m": [
+        710612,
+        5021456
+      ],
+      "bbox_epsg32632_m": [
+        660612,
+        4971456,
+        760612,
+        5071456
+      ],
+      "terrain": [
+        {
+          "source": "Veneto 2024 harmonized 5m LiDAR-derived DTM",
+          "kind": "DTM",
+          "resolution_m": 5,
+          "native_crs": "Veneto Fuso 12 (inspect exact source georeferencing)",
+          "status": "requires acquisition and coverage verification",
+          "url": "https://idt2.regione.veneto.it/idt/downloader/download"
+        },
+        {
+          "source": "Copernicus GLO-30 DSM",
+          "kind": "DSM fallback",
+          "resolution_m_approx": 30,
+          "status": "requires acquisition",
+          "url": "https://registry.opendata.aws/copernicus-dem/"
+        }
+      ],
+      "flood_tiles_by_10degree_lon": [
+        "ID123_N40_E10"
+      ],
+      "primary_rainfall_source": "https://www.arpa.veneto.it/temi-ambientali/meteo/file-e-allegati/le-precipitazioni-di-massima-intensita-annuale_agg-_2023.pdf",
+      "authority_pgra": "https://sigma.distrettoalpiorientali.it/portal/index.php/direttiva-alluvioni/pgra-2021-2027/cartografie-pgra/"
+    }
+  ],
+  "display_policy": "The 5 m DTM, 90 m JRC modeled hazard, and future higher-resolution local flow solver have different source accuracy/uncertainty and should be displayed in distinct layer modes, not conflated."
+}
