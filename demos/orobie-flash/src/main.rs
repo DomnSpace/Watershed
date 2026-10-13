@@ -122,7 +122,7 @@ impl App{
     fn water_motion(&self,wall:f32){
         if self.overview || !self.flow {return;}
         for y in (2..MAP_N-2).step_by(7){for x in (2..MAP_N-2).step_by(7){
-            let i=(y/2)*N+x/2;
+            let i=(y*N/MAP_N)*N+x*N/MAP_N;
             let h=self.sim.h[i];
             if h<0.04 {continue;}
             let dzdx=self.surface.grid[y*MAP_N+x+2]-self.surface.grid[y*MAP_N+x-2];
