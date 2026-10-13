@@ -51,7 +51,7 @@ fn surface_mesh(sim: &Model, base: f32, water: bool) -> Mesh {
     }}
     for y in 0..N-1 { for x in 0..N-1 {
         let i=(y*N+x) as u16;
-        indices.extend_from_slice(&[i,i+1,i+N as u16,i+1,i+N as u16+1,i+N as u16]);
+        indices.extend_from_slice(&[i,i+N as u16,i+1,i+1,i+N as u16,i+N as u16+1]);
     }}
     Mesh { vertices, indices, texture: None }
 }
