@@ -33,7 +33,7 @@ SCENES = {
 }
 WIDTH_M = 100_000
 FOCUS_M = 8_000
-SIZE = 256
+SIZE = 512
 NODATA = -9999.0
 
 def scene_bounds(lon, lat, size_m):
