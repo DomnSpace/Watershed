@@ -8,26 +8,31 @@
     100000
   ],
   "flood_reference": {
-    "publisher": "JRC/Copernicus EMS GloFAS",
-    "version": "2.1.2",
+    "publisher": "Copernicus Emergency Management Service / JRC EFAS European river flood hazard maps",
+    "version": "3.1.1",
+    "publication": "2026-03-05",
+    "crs": "EPSG:4326",
     "original_resolution": "3 arc seconds (~90 m)",
-    "depth_unit": "m",
-    "kind": "static maximum modeled riverine inundation depth, not dynamic rainfall runoff",
-    "base_url": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-GLOFAS/flood_hazard/",
-    "source_readme": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-GLOFAS/flood_hazard/README.txt",
-    "available_return_years": [
+    "units": "metres of static modelled inundation depth",
+    "base_url": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-EFAS/flood_hazard/",
+    "source_readme": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-EFAS/flood_hazard/README.txt",
+    "downloaded_return_years": [
       10,
-      20,
-      50,
-      75,
       100,
-      200,
       500
     ],
-    "unavailable_return_years": [
+    "other_available_return_years": [
+      20,
+      30,
+      40,
+      50,
+      75,
+      200
+    ],
+    "missing_requested_return_years": [
       1000
     ],
-    "warning": "RP1000 must be sourced from a separate license or clearly labelled extreme-value extrapolation. 10-year rainfall is not 10-year river flooding. Regional PGRA maps supersede for local hazard interpretation."
+    "assumptions": "Static riverine flood hazard; not a time series, rainstorm frequency, calibrated local simulation or official planning map."
   },
   "scenes": [
     {
@@ -64,12 +69,44 @@
           "url": "https://registry.opendata.aws/copernicus-dem/"
         }
       ],
-      "flood_tiles_by_10degree_lon": [
+      "primary_rainfall_source": "https://idro.arpalombardia.it/manual/lsppdoc.pdf",
+      "authority_pgra": "https://www.regione.lombardia.it/ambiente-e-territorio/pianificazione-territoriale/pianificazione-di-bacino/piano-di-gestione-rischio-alluvioni-nel-bacino-del-fiume-po-pgra",
+      "optional_glofas_tile_ids": [
         "ID115_N40_W0",
         "ID123_N40_E10"
       ],
-      "primary_rainfall_source": "https://idro.arpalombardia.it/manual/lsppdoc.pdf",
-      "authority_pgra": "https://www.regione.lombardia.it/ambiente-e-territorio/pianificazione-territoriale/pianificazione-di-bacino/piano-di-gestione-rischio-alluvioni-nel-bacino-del-fiume-po-pgra"
+      "grids": {
+        "overview": {
+          "size": [
+            512,
+            512
+          ],
+          "extent_m": [
+            100000,
+            100000
+          ]
+        },
+        "focus": {
+          "size": [
+            512,
+            512
+          ],
+          "extent_m": [
+            8000,
+            8000
+          ]
+        },
+        "hydrology": {
+          "size": [
+            128,
+            128
+          ],
+          "extent_m": [
+            8000,
+            8000
+          ]
+        }
+      }
     },
     {
       "id": "euganei",
@@ -106,11 +143,43 @@
           "url": "https://registry.opendata.aws/copernicus-dem/"
         }
       ],
-      "flood_tiles_by_10degree_lon": [
+      "primary_rainfall_source": "https://www.arpa.veneto.it/temi-ambientali/meteo/file-e-allegati/le-precipitazioni-di-massima-intensita-annuale_agg-_2023.pdf",
+      "authority_pgra": "https://sigma.distrettoalpiorientali.it/portal/index.php/direttiva-alluvioni/pgra-2021-2027/cartografie-pgra/",
+      "optional_glofas_tile_ids": [
         "ID123_N40_E10"
       ],
-      "primary_rainfall_source": "https://www.arpa.veneto.it/temi-ambientali/meteo/file-e-allegati/le-precipitazioni-di-massima-intensita-annuale_agg-_2023.pdf",
-      "authority_pgra": "https://sigma.distrettoalpiorientali.it/portal/index.php/direttiva-alluvioni/pgra-2021-2027/cartografie-pgra/"
+      "grids": {
+        "overview": {
+          "size": [
+            512,
+            512
+          ],
+          "extent_m": [
+            100000,
+            100000
+          ]
+        },
+        "focus": {
+          "size": [
+            512,
+            512
+          ],
+          "extent_m": [
+            8000,
+            8000
+          ]
+        },
+        "hydrology": {
+          "size": [
+            128,
+            128
+          ],
+          "extent_m": [
+            8000,
+            8000
+          ]
+        }
+      }
     }
   ],
   "display_policy": "The 5 m DTM, 90 m JRC modeled hazard, and future higher-resolution local flow solver have different source accuracy/uncertainty and should be displayed in distinct layer modes, not conflated."
