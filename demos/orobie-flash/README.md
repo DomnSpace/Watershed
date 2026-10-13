@@ -1,10 +1,15 @@
-# OROBIE / FLASH — Alpine Hydrology (Rust)
+# WATERSHED / OROBIE + EUGANEI
 
-Self-contained native 3D hydrograph and overland runoff visualisation for the **Watershed** repository's independent Rust sidebranch. Designed as a small WetterOnline job-application work sample, not an operational flood warning tool.
+Native Rust 3D visualisation of **two 100×100 km Italian landscapes**, with a switchable **8×8 km focus**, a conceptual local runoff simulator, and separate modeled EFAS 10/100/500-year river flood-depth reference layers.
 
-## Launch
+**Clearly delimited claims:** the scene *visualises* a georeferenced elevation raster when installed. The built-in rain→runoff approximation is **not a calibrated flood forecast**. EFAS flood-depth maps are **static independently modelled hazard rasters**, not outputs of the local simulation.
 
-Requires stable Rust on Windows/macOS/Linux.
+## One-click application
+
+The Windows CI downloads a working `orobie_flash.exe` build into artifact `OROBIE-FLASH-windows-x64`.
+Extract and double-click from its folder. Without additional data, the two landscapes are **visibly labelled procedural stand-ins**, and RP hazard overlays say "NOT INSTALLED". There are no invented official hazard maps.
+
+From source:
 
 ```powershell
 cd demos/orobie-flash
@@ -12,47 +17,83 @@ cargo test --release
 cargo run --release
 ```
 
-Windows downloadable builds are produced by the branch's GitHub Actions workflow, after passing tests. Download the workflow artifact and double-click `orobie_flash.exe`. The included procedural fallback launches without any data download.
+## Acquire both real 100 km scenes (Copernicus 30 m DSM)
 
-## Actual Orobie terrain
+Requires Python 3.11+, internet, several hundred MB of disk space and a few minutes:
+```powershell
+py -m pip install numpy rasterio pyproj boto3 requests
+py tools/fetch_inputs.py --region both --dem
+$dem = @(Get-ChildItem raw_inputs/dem -Recurse -Filter *.tif | Select-Object -ExpandProperty FullName)
+py tools/build_regions.py --region orobie --dem $dem
+py tools/build_regions.py --region euganei --dem $dem
+cargo run --release
+```
 
-The runner deliberately starts with **synthetic, clearly labelled relief** when `data/orobie.asc` is absent. For a real Alpine elevation base:
+The downloader accesses anonymous public AWS `copernicus-dem-30m` S3 tiles and falls back to public 90 m tiles where necessary. It lists exact S3 objects by 1×1-degree geographic tile to avoid guessing filenames. Real data are not bundled in GitHub because of size. All source GeoTIFFs must include valid native CRS/georeferencing.
 
-1. Obtain a properly licensed DEM GeoTIFF that covers Valbondione, Lombardia (e.g. Regione Lombardia DTM 5×5, as available through Geoportale; or Copernicus GLO-30 public).
-2. Locally preprocess with Python, rasterio, numpy: `python tools/prepare_dem.py --input path/to/terrain.tif`.
-3. Launch the native runner from `demos/orobie-flash`. It then reads `data/orobie.asc` in EPSG:32632 (UTM 32N metres).
-4. For a portable Windows distribution, put the `data/orobie.asc` file alongside the executable under `data/`; binary artifact intentionally excludes large geodata.
+**Higher resolution:** first acquire regional 5 m *bare-earth DTM* coverage in Lombardia and Veneto (see `docs/TWO_REGION_DATA_PLAN.md`). Pass these georeferenced raster paths **before** the downloaded Copernicus paths via `--dem`. The builder uses the first valid source in each cell. Veneto "Fuso 12" must have its actual native CRS in the raster: never assign EPSG:32632 by assumption.
 
-Default domain: 128×128 cells ×30 m = 3.84×3.84 km near 46.040°N 10.007°E (coordinates are only used in preprocessing). The grid is intentionally small enough for an interactive demo.
+Terrain samples written to `data/orobie/` and `data/euganei/`:
+- `overview.asc`: 512×512, exactly 100 km, EPSG:32632, 195.3125 m render cells;
+- `focus.asc`: 512×512, exactly 8 km, EPSG:32632, 15.625 m render cells;
+- `provenance.json`: machine-readable source list and study-area coordinates.
+If underlying DEM is 30 m, the 15.625 m local rendering samples are *interpolated*. They add NO extra terrain measurement detail.
 
-## Keys
+The **local simulated flow** uses a separate 128×128 finite-volume-like approximation, 62.5 m cells over the focus, independent of static 100 km hazard maps.
 
-- Space pause/unpause; R reset deterministic model.
-- 1/2/3 change synthetic storm scenarios (broad, local convective, double-peak), resetting the model.
-- +/- change peak rain input (mm/h).
-- Left/right rotate camera; up/down camera inclination; mouse wheel zoom; C automatic orbit.
-- Q toggle visible rainfall streaks.
+### Load modeled flood reference (RP10, RP100, RP500)
 
-## Physical model and truth boundaries
+Optional data transfer is large (~900 MB total Europe-wide TIFFs). You may fetch only RP10 first:
+```powershell
+py tools/fetch_inputs.py --efas 10 100 500
+py tools/build_regions.py --region orobie --dem $dem \
+    --hazard10 raw_inputs/efas/Europe_RP10_filled_depth.tif \
+    --hazard100 raw_inputs/efas/Europe_RP100_filled_depth.tif \
+    --hazard500 raw_inputs/efas/Europe_RP500_filled_depth.tif
+py tools/build_regions.py --region euganei --dem $dem \
+    --hazard10 raw_inputs/efas/Europe_RP10_filled_depth.tif \
+    --hazard100 raw_inputs/efas/Europe_RP100_filled_depth.tif \
+    --hazard500 raw_inputs/efas/Europe_RP500_filled_depth.tif
+```
+**PowerShell note:** use each long `py` command on **one physical line**; the multiline formatting above is conceptual. PowerShell continuation uses backticks, not backslashes.
 
-- Rain: time-dependent Gaussian pulse with spatial modulation; **fully synthetic**, not radar or ARPA observations.
-- Infiltration: illustrative saturation-dependent soil capacity; no calibrated land-cover or soils.
-- Routing: 4-connected surface-water gradient driving Manning-style diffusive overland fluxes, explicit donor-volume limiting, no-flow lateral boundaries, open south boundary; fixed 4 s substeps.
-- Outputs: water depth field (metres), outlet hydrograph (m³/s), cumulative rain, infiltrated and outflow volumes (m³), mass balance residual.
-- Visuals: shaded mesh, contours, animated flux trajectories, storm filaments and deliberately exaggerated water display elevation. Display depth exaggeration is for perceptual clarity, **not metric flood surface geometry**.
-- Validation scope: Rust tests check replay determinism, water nonnegativity and approximate discrete volume balance. They do **not** validate peak flow, real-world inundation extent, full Saint-Venant shallow-water dynamics, infiltration rates or hazard thresholds.
-- Proper flood-risk analysis would need measured rainfall forcing, stream-gauge calibration, hydrologically conditioned terrain, drainage/conveyance details, appropriate solver, validation, and uncertainty.
+Copernicus EMS EFAS v3.1.1 (March 2026), 3 arc-second (~90 m), modelled riverine inundation depth in metres; not urban surface runoff, pluvial flash-flood velocity or measured time series:
+https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-EFAS/flood_hazard/README.txt
 
-## Data links and attribution
+**No RP1000** is sourced by EFAS or GloFAS. A 1000-year scene requires clearly labelled extreme-value extrapolation or a separately licensed validated layer; it is intentionally absent.
 
-- Regione Lombardia DTM 5×5 (2015 edition; metadata lists CC BY 4.0): https://www.geoportale.regione.lombardia.it/
-- ARPA Lombardia observed rainfall: https://www.arpalombardia.it/temi-ambientali/meteo-e-clima/form-richiesta-dati/
-- HydroBASINS topology: https://www.hydrosheds.org/products/hydrobasins
-- Copernicus Digital Elevation Model (alternative DSM, not bare-earth DTM): https://registry.opendata.aws/copernicus-dem/
-- Rust rendering: macroquad https://docs.rs/macroquad/latest/macroquad/
+## Controls
 
-This standalone path intentionally leaves the existing Python Europe/global watershed builds and GitHub Pages workflow unchanged.
+| Key | Action |
+|---|---|
+| `M` | Switch Orobie ↔ Euganei |
+| `V` | 100 km overview ↔ 8 km local focus |
+| `0` / `4` | Explicit overview / focus |
+| `H` | Cycle **static** 10/100/500-year EFAS depth overlays in overview (if installed) |
+| `1` / `2` / `3` | Switch synthetic *storm* scenarios (independent of EFAS return periods) |
+| Space / `R` | Pause / reset conceptual runoff |
+| `+` / `-` | Synthetic rain rate |
+| `Q` / `F` | Visible rain streaks / live water-flow glints |
+| Arrows / wheel / `C` | Orbit and inclination / zoom / toggle slow orbit |
 
-## Next upgrades before advertising scientific fidelity
+The renderer uses 64×64 surface mesh tiles with software sun shading, physically scaled depth offsets and opaque contiguous water, avoiding the previous transparent depth-sort holes, ghostly white slivers and sparse dotted-water mesh. **Graphics need visual inspection on a real Windows GPU after this code change**; CI verifies compilation/tests, not screenshots or subjective look.
 
-(1) Import actual local DEM and verify drainage orientation; (2) represent real catchment boundary and river centerline; (3) integrate ARPA measured precipitation as gridded or station-interpolated forcing; (4) benchmark numerical convergence vs grid and timestep; (5) validate modelled discharge against gauges; (6) capture a reliable one-click Windows build and a 15-second demonstration video or screenshots.
+## Numerical limitations and testing
+
+The interactive local model integrates stylized rain, soil wetting, rainfall loss and depth-gradient-directed Manning-like donor-limited 4-neighbour transfer. It conserves modeled water to a numerical tolerance and provides a hydrograph at an open south boundary. This is not LISFLOOD-FP, a 2-D Saint-Venant hydraulic solution, a calibrated storm drain network or a hydrologically conditioned terrain model. Model depth spikes and downstream pulse oscillation are known limitations requiring further solver, timestep, and inlet/outlet validation. No official flood hazard level or return period should be inferred from changing storm intensity.
+
+Reproducibility:
+```powershell
+cargo test --release
+py tools/test_regions.py
+```
+
+## Original data and attribution
+
+- Regione Lombardia DTM 5×5 (local portions may have LiDAR): https://www.geoportale.regione.lombardia.it/download-dati
+- Regione Veneto 2024 LiDAR-derived DTM 5 m (partial coverage, native Fuso 12): https://idt2.regione.veneto.it/nuovo-dtm-derivato-da-dati-lidar/
+- Copernicus DEM GLO-30 **DSM**, Copernicus 2021 release, public anonymous S3: https://registry.opendata.aws/copernicus-dem/
+- EFAS European river flood hazard maps v3.1.1, EU Copernicus EMS, released 2026-03-05: https://doi.org/10.2905/1D128B6C-A4EE-4858-9E34-6210707F3C81
+- Local authority PGRA, rainfall intensity-duration-frequency studies, gauge comparisons and uncertainties: see `docs/TWO_REGION_DATA_PLAN.md`.
+
+The branch intentionally leaves the main Watershed Python/Pages code unchanged.
