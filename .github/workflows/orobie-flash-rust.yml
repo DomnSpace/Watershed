@@ -1,0 +1,37 @@
+name: Orobie Flash Windows runner
+on:
+  push:
+    branches:
+      - feat/orobie-flash-flood-rust
+    paths:
+      - 'demos/orobie-flash/**'
+      - '.github/workflows/orobie-flash-rust.yml'
+  workflow_dispatch:
+
+jobs:
+  build_windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: demos/orobie-flash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: demos/orobie-flash
+      - name: Unit tests
+        run: cargo test --release
+      - name: Build portable EXE
+        run: cargo build --release
+      - name: Assemble one-click sample
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/orobie_flash.exe dist/orobie_flash.exe
+          Copy-Item README.md dist/README.md
+          New-Item -ItemType Directory -Force -Path dist/data | Out-Null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OROBIE-FLASH-windows-x64
+          path: demos/orobie-flash/dist/
