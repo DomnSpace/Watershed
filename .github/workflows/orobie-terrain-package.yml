@@ -21,6 +21,15 @@ jobs:
       - name: Download actual Copernicus GLO30 DSM with 90m fallback
         working-directory: demos/orobie-flash
         run: python tools/fetch_inputs.py --region both --dem
+      - name: Acquire EFAS RP10, RP100 and RP500 real modeled inundation depth
+        working-directory: demos/orobie-flash
+        shell: bash
+        run: |
+          if python tools/fetch_inputs.py --efas 10 100 500; then
+            echo "All three EFAS rasters downloaded."
+          else
+            echo "::warning::EFAS unavailable; publish DEM without a fabricated flood reference."
+          fi
       - name: Build verified georeferenced 100km and 8km tile packs
         working-directory: demos/orobie-flash
         shell: bash
@@ -31,8 +40,13 @@ jobs:
           dem = sorted(Path("raw_inputs/dem").rglob("*.tif"),key=lambda p:("90m" in str(p),str(p)))
           if not dem:
               raise RuntimeError("No REAL public Copernicus DEM files downloaded")
+          flood=[]
+          for rp in (10,100,500):
+              src=Path(f"raw_inputs/efas/Europe_RP{rp}_filled_depth.tif")
+              if src.exists() and src.stat().st_size>1_000_000:
+                  flood.extend([f"--hazard{rp}",str(src)])
           for region in ["orobie","euganei"]:
-              subprocess.check_call([sys.executable,"tools/build_regions.py","--region",region,"--dem",*[str(p) for p in dem]])
+              subprocess.check_call([sys.executable,"tools/build_regions.py","--region",region,"--dem",*[str(p) for p in dem],*flood])
               for name in ("overview.asc","focus.asc","provenance.json"):
                   assert (Path("data")/region/name).stat().st_size>1000
           PY
