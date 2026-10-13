@@ -3,7 +3,7 @@
 use std::{fs, path::Path};
 use crate::model::N;
 
-pub const MAP_N: usize = 256;
+pub const MAP_N: usize = 512;
 
 pub struct Grid {
     pub z: Vec<f32>,
@@ -42,7 +42,7 @@ impl Landscape {
         // Hydrology uses focus downsampled to 128², not the entire 100km AOI.
         let mut z=Vec::with_capacity(N*N);
         for y in 0..N { for x in 0..N {
-            z.push(self.focus.z[(2*y+1)*MAP_N+2*x+1]);
+            z.push(self.focus.z[(4*y+2)*MAP_N+4*x+2]);
         }}
         crate::model::Model::new(z,self.focus.cell_m*2.)
     }
