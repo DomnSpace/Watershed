@@ -138,6 +138,28 @@ impl App{
                 Color::new(0.66,0.93,0.85,0.93));
         }}
     }
+    fn radar(&self){
+        // Rainfall is sampled from the SAME forcing that enters the flow model.
+        // Never call this observed radar data.
+        let x=18.;let y=230.;
+        panel(x,y,256.,253.);
+        tag("STORM FIELD  /  SYNTHETIC",x+14.,y+31.,17.,WHITE);
+        let n=25usize;
+        let square=8.05;
+        for yy in 0..n { for xx in 0..n {
+            let model_x=xx*(N-1)/(n-1);
+            let model_y=yy*(N-1)/(n-1);
+            let intensity=self.sim.rainfall_at(model_x,model_y);
+            let t=(intensity/self.sim.peak_mm_h.max(1.)).clamp(0.,1.);
+            let color=if t<0.03 {Color::new(0.06,0.13,0.16,1.)}
+                else if t<0.30 {Color::new(0.07,0.27+1.2*t,0.47+1.0*t,1.)}
+                else if t<0.65 {Color::new(0.1+1.25*(t-0.30),0.73,0.84-0.85*(t-0.30),1.)}
+                else {Color::new(0.62+0.88*(t-0.65),0.66-1.3*(t-0.65),0.35+0.88*(t-0.65),1.)};
+            draw_rectangle(x+26.+xx as f32*square,y+42.+yy as f32*square,
+                           square+0.12,square+0.12,color);
+        }}
+        tag("MODEL RAINFALL  [mm/h]",x+26.,y+247.,15.,DIM);
+    }
     fn hud(&self,dt:f32){
         let sw=screen_width();let sh=screen_height();
         panel(18.,18.,475.,196.);
@@ -225,6 +247,7 @@ async fn main(){
         app.water_motion(wall);
         app.rainfall(wall);
         set_default_camera();
+        app.radar();
         app.hud(dt);
         next_frame().await;
     }
